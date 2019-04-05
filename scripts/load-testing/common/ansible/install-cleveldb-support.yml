@@ -1,0 +1,12 @@
+---
+- name: Install dependencies for Tendermint cleveldb support
+  yum:
+    name: "{{ deps }}"
+    state: latest
+    update_cache: yes
+  vars:
+    deps:
+      - snappy
+      - snappy-devel
+      - leveldb
+      - leveldb-devel

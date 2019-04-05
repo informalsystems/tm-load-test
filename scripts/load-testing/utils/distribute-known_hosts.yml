@@ -1,0 +1,19 @@
+---
+- hosts: "{{ lookup('env', 'TARGET_HOSTS').split(',') }}"
+  vars:
+    known_hosts_user: centos
+    known_hosts_path: /tmp/known_hosts
+  tasks:
+    - name: Check if the known_hosts file exists
+      stat: "path=/home/{{ known_hosts_user }}/.ssh/known_hosts"
+      register: known_hosts
+    - name: Make a backup of the known_hosts file
+      copy:
+        src: "/home/{{ known_hosts_user }}/.ssh/known_hosts"
+        dest: "/home/{{ known_hosts_user }}/.ssh/known_hosts.bak"
+        remote_src: yes
+      when: known_hosts.stat.exists
+    - name: Distribute known_hosts
+      copy:
+        src: "{{ known_hosts_path }}"
+        dest: "/home/{{ known_hosts_user }}/.ssh/known_hosts"

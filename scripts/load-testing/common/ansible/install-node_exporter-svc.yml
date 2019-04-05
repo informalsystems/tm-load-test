@@ -1,0 +1,20 @@
+# --------------------------------------------------------------
+# Installs the Prometheus node_exporter application as a service
+# --------------------------------------------------------------
+- name: Download and extract node_exporter
+  unarchive:
+    src: "{{ node_exporter_url }}"
+    dest: /tmp/
+    remote_src: yes
+- name: Install executable
+  shell: |
+    find /tmp -name 'node_exporter' -exec cp {} /usr/bin/ \;
+    chown root:root /usr/bin/node_exporter
+    chmod 0755 /usr/bin/node_exporter
+- name: Copy service definition to nodes
+  copy:
+    src: config/node_exporter.service
+    dest: /etc/systemd/system/node_exporter.service
+- name: Reload systemd services
+  systemd:
+    daemon_reload: yes

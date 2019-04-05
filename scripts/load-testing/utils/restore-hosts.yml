@@ -1,0 +1,12 @@
+---
+# Utility script to restore /etc/hosts.bak to /etc/hosts
+- hosts:
+    - tik
+    - tak
+    - tok
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: Restore backup hosts file
+      shell: |
+        cp /etc/hosts.bak /etc/hosts
