@@ -1,0 +1,86 @@
+---
+- hosts: tendermint
+  become: yes
+  vars:
+    always_deploy_svc: no
+    local_tmbin: "{{ lookup('env', 'GOPATH') }}/src/github.com/tendermint/tendermint/build/tendermint"
+    tm_outage_sim_server_bin: "{{ lookup('env', 'GOPATH') }}/src/github.com/interchainio/tm-load-test/build/tm-outage-sim-server"
+    node_exporter_url: "https://github.com/prometheus/node_exporter/releases/download/v0.17.0/node_exporter-0.17.0.linux-amd64.tar.gz"
+    fast_mode: no
+    with_cleveldb: no
+  tasks:
+    # If we need cleveldb support
+    - name: Install cleveldb dependencies on target nodes, if necessary
+      include_tasks: ../../common/ansible/install-cleveldb-support.yml
+      when: (not fast_mode) and with_cleveldb
+
+    # Install the outage simulator server
+    - name: Check if outage simulator server service is present
+      stat: path=/etc/systemd/system/tm-outage-sim-server.service
+      register: outage_sim_server
+    - name: Install outage simulator service if not present
+      include_tasks: ../../common/ansible/install-outage-sim-svc.yml
+      when: not fast_mode and (always_deploy_svc or not outage_sim_server.stat.exists)
+    - name: Ensure outage simulator is up and ready
+      service: name=tm-outage-sim-server state=restarted
+    
+    # Install Prometheus node_exporter
+    - name: Check if node_exporter is present
+      stat: path=/etc/systemd/system/node_exporter.service
+      register: node_exporter
+    - name: Install node_exporter if not present
+      include_tasks: ../../common/ansible/install-node_exporter-svc.yml
+      when: not fast_mode and (always_deploy_svc or not node_exporter.stat.exists)
+    - name: Ensure node_exporter service is up and ready
+      service: name=node_exporter state=restarted
+
+    # Check if we need to configure the systemd service
+    - name: Check if Tendermint service is present
+      stat: path=/etc/systemd/system/tendermint.service
+      register: tm_service
+      when: not fast_mode
+    - name: Install Tendermint service
+      include_tasks: ../../common/ansible/install-tm-svc.yml
+      when: not fast_mode and (always_deploy_svc or not tm_service.stat.exists)
+    - name: Ensure Tendermint service is stopped
+      service:
+        name: tendermint
+        state: stopped
+        enabled: no
+
+    # Sync the Tendermint binary
+    - name: Sync Tendermint binary to target machines
+      synchronize:
+        src: "{{ local_tmbin }}"
+        dest: /usr/bin/tendermint
+      when: not fast_mode
+    - name: Set binary permissions
+      file:
+        path: /usr/bin/tendermint
+        owner: root
+        group: root
+        mode: 0755
+      when: not fast_mode
+
+    # Sync the different nodes' configurations
+    - name: Erase Tendermint home folder
+      file:
+        path: /home/tendermint/.tendermint
+        state: absent
+    - name: Sync node configurations
+      synchronize:
+        src: "/tmp/nodes/{{ inventory_hostname }}/"
+        dest: /home/tendermint/.tendermint/
+    - name: Set Tendermint home permissions
+      file:
+        path: /home/tendermint/.tendermint
+        owner: tendermint
+        group: tendermint
+        recurse: yes
+
+    # Start the Tendermint service
+    - name: Start Tendermint
+      service:
+        name: tendermint
+        state: started
+        enabled: yes

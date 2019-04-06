@@ -1,0 +1,21 @@
+---
+- hosts: "{{ lookup('env', 'TARGET_HOSTS').split(',') }}"
+  vars:
+    public_key_user: centos
+    public_key_path: /tmp/pubkey.pub
+    public_key_state: present
+  tasks:
+    - name: Check if the authorized_keys file exists
+      stat: "path=/home/{{ public_key_user }}/.ssh/authorized_keys"
+      register: authorized_keys
+    - name: Make a backup of the authorized_keys file
+      copy:
+        src: "/home/{{ public_key_user }}/.ssh/authorized_keys"
+        dest: "/home/{{ public_key_user }}/.ssh/authorized_keys.bak"
+        remote_src: yes
+      when: authorized_keys.stat.exists
+    - name: Distribute public key
+      authorized_key:
+        user: centos
+        state: "{{ public_key_state }}"
+        key: "{{ lookup('file', public_key_path) }}"

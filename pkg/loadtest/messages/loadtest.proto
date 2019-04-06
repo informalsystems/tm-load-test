@@ -1,0 +1,110 @@
+syntax = "proto3";
+package messages;
+import "github.com/AsynkronIT/protoactor-go/actor/protos.proto";
+
+// SlaveReady is sent by a slave when it's ready to start load testing.
+message SlaveReady {
+    actor.PID Sender = 1;
+}
+
+// SlaveAccepted is sent by the master to a slave to indicate that it's been
+// accepted for load testing.
+message SlaveAccepted {
+    actor.PID Sender = 1;
+}
+
+// SlaveRejected is sent by the master to a slave when it already has too many
+// connected slaves, or it has seen a slave with the same ID before.
+message SlaveRejected {
+    actor.PID Sender = 1;
+    string Reason = 2; // The reason for the slave being rejected.
+}
+
+// StartLoadTest is sent by the master to the slaves to kick off the testing.
+message StartLoadTest {
+    actor.PID Sender = 1;
+}
+
+// LoadTestUnderway is sent by slaves on a regular basis from the instant that
+// load testing starts. This acts as a notification to the master that the
+// slaves are, in fact, testing, as well as a form of health check/heartbeat to
+// ensure that the load testing completes effectively.
+message LoadTestUnderway {
+    actor.PID Sender = 1;
+}
+
+// MasterFailed is sent by the master node to the slaves if the master node
+// encounters an error from which it cannot recover.
+message MasterFailed {
+    actor.PID Sender = 1;
+    string Reason = 2; // Why did the master fail?
+}
+
+// SlaveFailed is sent by a slave if testing fails for any reason.
+message SlaveFailed {
+    actor.PID Sender = 1;
+    string Reason = 2; // Why did this slave fail?
+}
+
+// SlaveUpdate is an intermediate update message from a slave to the master
+// during load testing.
+message SlaveUpdate {
+    actor.PID Sender           = 1;
+    int64     InteractionCount = 2; // The total number of completed interactions so far.
+}
+
+// SlaveFinished is sent by a slave when it successfully finishes its load
+// testing.
+message SlaveFinished {
+    actor.PID Sender = 1;
+    CombinedStats Stats = 2; // The final statistics from this slave's load testing.
+}
+
+// CheckAllSlavesConnected is sent by the master to itself after a preconfigured
+// timeout period to ensure that all slaves are connected. If we are missing
+// slaves at this time, the master will fail and shut down.
+message CheckAllSlavesConnected {
+    actor.PID Sender = 1;
+}
+
+// Kill is an internal message for terminating a node when SIGTERM or SIGINT is
+// received.
+message Kill {
+    actor.PID Sender = 1;
+}
+
+// CombinedStats encapsulates the statistics we receive from a slave node
+// during/after testing for both interactions and requests.
+message CombinedStats {
+    int64                     TotalTestTime = 1; // Total time for the overall load test (including delays, etc.)
+    SummaryStats              Interactions  = 2; // Summarises the stats for interactions from this slave.
+    map<string, SummaryStats> Requests      = 3; // Summarises the stats per request category from this slave.
+}
+
+// SummaryStats is a collection of statistics across a number of interactions or
+// requests.
+message SummaryStats {
+    int64  Count        = 1; // How many interactions/requests took place.
+    int64  Errors       = 2; // The number of errors that occurred.
+    int64  TotalTime    = 3; // The total time summed across all interactions/requests (nanoseconds).
+    int64  MinTime      = 4; // The minimum time for an interaction/request (nanoseconds).
+    int64  MaxTime      = 5; // The maximum time for an interaction/request (nanoseconds).
+    int64  TotalClients = 6; // For multi-client summaries, this is the number of clients responsible for the interactions/requests.
+
+    // For keeping track of the different kinds of errors that occurred, as well
+    // as the number of times each error occurred.
+    map<string, int64> ErrorsByType = 7;
+
+    // Allows us to plot a summary picture of the range of response times during
+    // our interactions/requests.
+    ResponseTimeHistogram ResponseTimes = 8;
+}
+
+// ResponseTimeHistogram allows us to plot the range of different
+// interaction/response times during a particular load test.
+message ResponseTimeHistogram {
+    int64 Timeout              = 1; // The maximum possible range of the histogram.
+    int64 BinSize              = 2; // The size of a histogram bin (nanoseconds).
+    int64 BinCount             = 3; // The number of bins in the TimeBins structure.
+    map<int64, int64> TimeBins = 4; // The histogram itself, mapping response time bins to counts.
+}

@@ -1,0 +1,74 @@
+version: 2
+
+defaults: &defaults
+  working_directory: /go/src/github.com/interchainio/tm-load-test
+  docker:
+    - image: circleci/golang:1.11.5
+  environment:
+    GOBIN: /tmp/workspace/bin
+
+jobs:
+  setup_dependencies:
+    <<: *defaults
+    steps:
+      - run: mkdir -p /tmp/workspace/bin
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-pkg-cache
+      - run:
+          name: Get dependencies
+          command: |
+            export PATH="${GOBIN}:${PATH}"
+            make get-deps
+      - save_cache:
+          key: v1-pkg-cache
+          paths:
+            - /go/pkg
+      - save_cache:
+          key: v1-tree-{{ .Environment.CIRCLE_SHA1 }}
+          paths:
+            - /go/src/github.com/interchainio/tm-load-test
+
+  lint:
+    <<: *defaults
+    steps:
+      - attach_workspace:
+          at: /tmp/workspace
+      - restore_cache:
+          key: v1-pkg-cache
+      - restore_cache:
+          key: v1-tree-{{ .Environment.CIRCLE_SHA1 }}
+      - run:
+          name: Lint
+          command: |
+            export PATH="${GOBIN}:${PATH}"
+            make lint
+
+  test:
+    <<: *defaults
+    steps:
+      - attach_workspace:
+          at: /tmp/workspace
+      - restore_cache:
+          key: v1-pkg-cache
+      - restore_cache:
+          key: v1-tree-{{ .Environment.CIRCLE_SHA1 }}
+      - run:
+          name: Test
+          command: |
+            export PATH="${GOBIN}:${PATH}"
+            make test
+
+workflows:
+  version: 2
+
+  build:
+    jobs:
+      - setup_dependencies
+      - lint:
+          requires:
+            - setup_dependencies
+      - test:
+          requires:
+            - setup_dependencies
