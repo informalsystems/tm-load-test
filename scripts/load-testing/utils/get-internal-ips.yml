@@ -1,0 +1,17 @@
+---
+# Ansible playbook utility script to fetch servers' internal IP addresses
+- hosts:
+    - tik
+    - tak
+    - tok
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: Run ifconfig on remote host
+      shell: |
+        ifconfig eth0 > /tmp/ifconfig.log 2>&1
+    - name: Fetch ifconfig output files for each host
+      fetch:
+        src: /tmp/ifconfig.log
+        dest: "/tmp/ifconfig-{{ inventory_hostname }}"
+        flat: yes

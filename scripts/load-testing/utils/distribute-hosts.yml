@@ -1,0 +1,20 @@
+---
+# Utility script to distribute a "hosts" file to a list of target hosts
+- hosts:
+    - tik
+    - tak
+    - tok
+  become: yes
+  gather_facts: no
+  vars:
+    hosts_file: /tmp/hosts
+  tasks:
+    - name: Copy hosts file across
+      copy: "src={{ hosts_file }} dest=/tmp/hosts"
+    - name: Add/update hosts entries in /etc/hosts
+      shell: |
+        cp /etc/hosts /etc/hosts.bak
+        while IFS="" read -r line || [ -n "$line" ]; do
+          ipaddr=`echo ${line} | sed "s/\([0-9.]*\).*/\1/"`
+          printf "`grep -v ${ipaddr} /etc/hosts`\n${line}\n" > /etc/hosts
+        done < /tmp/hosts

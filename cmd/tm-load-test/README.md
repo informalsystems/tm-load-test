@@ -1,0 +1,151 @@
+# tm-load-test
+
+A tool for distributed load testing on [Tendermint](https://tendermint.com)
+networks.
+
+## Overview
+`tm-load-test` is both a tool for distributed load testing, as well as an
+example as to how to make use of the [`loadtest`
+package](../../pkg/loadtest/README.md) to do your own load testing on a
+Tendermint network. `tm-load-test` assumes that the ABCI application under test
+is the `kvstore`, and is more interested in the performance of the underlying
+Tendermint network than the ABCI application itself.
+
+`tm-load-test` runs in a master/slave configuration, where the master controls
+the number and distribution of tasks across multiple Tendermint nodes.
+
+## Quick Start
+Create some configuration for your master node (`load-test.toml`):
+
+```toml
+[master]
+# The host IP/port to which to bind the master
+bind = "127.0.0.1:35000"
+
+# How many slaves to expect to connect before starting the load test
+expect_slaves = 2
+
+# How long to wait for slaves to connect before considering the load test a
+# failure (if not all slaves have connected within this time period)
+expect_slaves_within = "1m"
+
+# The folder where tm-load-test will dump results.
+results_dir = "./results"
+
+[slave]
+# The IP address/port to which to bind the slave node. Leave out the port to
+# pick a random port.
+bind = "0.0.0.0:"
+
+# IP address and port through which to reach the master (could be different
+# from the bind address above, e.g. if the master is bound to 0.0.0.0:35000,
+# we still need an external address through which to access the master).
+master = "127.0.0.1:35000"
+
+# The interval at which stats updates will be sent to the master. Note that this
+# is approximate - due to the nature of the client interaction loop. Updates are
+# sent back to the master in a "best effort" fashion.
+update_interval = "10s"
+
+[test_network]
+# Do we want to collect Prometheus stats during the load testing too?
+enable_prometheus = true
+# How often to poll the Prometheus endpoint for each host
+prometheus_poll_interval = "10s"
+# At what point do we consider a Prometheus polling operation a failure?
+prometheus_poll_timeout = "1s"
+
+    [[test_network.targets]]
+    id = "host1"
+    url = "http://192.168.2.1:26657"
+
+    # A comma-separated list of Prometheus endpoints to poll on a regular basis.
+    # The format for a Prometheus endpoint is of the form:
+    # "endpointid1=http://host1,endpointid2=http://host2", where the output
+    # statistics will include the endpoint ID in the metric names to
+    # differentiate their sources.
+    prometheus_urls = "tendermint=http://192.168.2.1:26660"
+
+    # If tm-outage-sim-server is running on this host, tm-load-test will
+    # attempt to bring it down after 5 minutes, and then back up after 8
+    # minutes.
+    #outages = "5m:down,8m:up"
+
+    [[test_network.targets]]
+    id = "host2"
+    url = "http://192.168.2.2:26657"
+    prometheus_urls = "tendermint=http://192.168.2.2:26660"
+
+    [[test_network.targets]]
+    id = "host3"
+    url = "http://192.168.2.3:26657"
+    prometheus_urls = "tendermint=http://192.168.2.3:26660"
+
+[clients]
+# What type of client to spawn. The `tmrpc` type uses the Tendermint client for
+# interacting with remote Tendermint nodes' RPC endpoints.
+type = "tmrpc"
+
+# The number of clients to spawn per slave.
+spawn = 500
+
+# The rate at which new clients should be spawned on each slave, per second.
+# A value of 10 would mean that every second, 10 new clients will be spawned on
+# each slave. A value of 0.1 would mean that only 1 client will be spawned
+# every 10 seconds.
+spawn_rate = 10
+
+# The maximum number of interactions to send, per client. Since tm-load-test
+# assumes the kvstore ABCI application is running, an interaction is defined
+# as 2 separate requests: a single PUT operation for a key/value pair, followed
+# by a GET operation for that same key, ensuring the stored value matches the
+# returned value. Set to -1 to make this "infinite", but then the
+# `max_test_time` parameter MUST be set.
+max_interactions = 10000
+
+# The maximum amount of time to allow for load testing. If this is exceeded,
+# the test will be brought to and end.
+max_test_time = "10m"
+
+# The maximum time to wait before each request in an interaction. The actual
+# wait times will be uniformly randomly distributed between `request_wait_min`
+# and `request_wait_max`.
+request_wait_min = "50ms"
+
+# The minimum time to wait before request in an interaction.
+request_wait_max = "100ms"
+
+# After how long do we consider a request to have timed out?
+request_timeout = "5s"
+
+# After how long do we consider an interaction to have timed out?
+interaction_timeout = "11s"
+```
+
+To run the master:
+
+```bash
+tm-load-test -c load-test.toml -master
+```
+
+To run the slaves:
+
+```bash
+# Run the first slave from one host
+tm-load-test -c load-test.toml -slave
+
+# Run the second slave (from a different host to the previous command)
+tm-load-test -c load-test.toml -slave
+```
+
+## Results
+The following results will be output after the execution of the load test, and
+will be written into the `master.results_dir` directory.
+
+* `summary.csv` - Will contain a summary of interaction- and request-related
+  statistics from the load test.
+* `host1.csv`, `host2.csv`, ... - One CSV file for each host specified in the
+  `test_network.targets` array. Each CSV file contains all of the collected
+  Prometheus statistics from each Prometheus endpoint for the relevant host for
+  the duration of the load test.
+

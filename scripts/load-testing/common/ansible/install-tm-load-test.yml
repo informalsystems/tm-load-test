@@ -1,0 +1,9 @@
+---
+- name: Sync tm-load-test binary across to server
+  synchronize:
+    src: "{{ binaries.tmloadtest }}"
+    dest: "/usr/bin/tm-load-test"
+- name: Set tm-load-test binary permissions
+  file:
+    path: "/usr/bin/tm-load-test"
+    mode: 0755
