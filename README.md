@@ -1,3 +1,5 @@
+[![CircleCI](https://circleci.com/gh/interchainio/tm-load-test/tree/master.svg?style=svg)](https://circleci.com/gh/interchainio/tm-load-test/tree/master)
+
 # tm-load-test
 
 `tm-load-test` is a distributed load testing tool (and framework) for load

@@ -1,74 +1,73 @@
-version: 2
+version: 2.1
 
 defaults: &defaults
   working_directory: /go/src/github.com/interchainio/tm-load-test
   docker:
-    - image: circleci/golang:1.11.5
+    - image: circleci/golang
   environment:
-    GOBIN: /tmp/workspace/bin
+    GO111MODULE: on
 
 jobs:
-  setup_dependencies:
-    <<: *defaults
-    steps:
-      - run: mkdir -p /tmp/workspace/bin
-      - checkout
-      - restore_cache:
-          keys:
-            - v1-pkg-cache
-      - run:
-          name: Get dependencies
-          command: |
-            export PATH="${GOBIN}:${PATH}"
-            make get-deps
-      - save_cache:
-          key: v1-pkg-cache
-          paths:
-            - /go/pkg
-      - save_cache:
-          key: v1-tree-{{ .Environment.CIRCLE_SHA1 }}
-          paths:
-            - /go/src/github.com/interchainio/tm-load-test
-
   lint:
     <<: *defaults
     steps:
-      - attach_workspace:
-          at: /tmp/workspace
-      - restore_cache:
-          key: v1-pkg-cache
-      - restore_cache:
-          key: v1-tree-{{ .Environment.CIRCLE_SHA1 }}
+      - checkout
       - run:
           name: Lint
           command: |
-            export PATH="${GOBIN}:${PATH}"
             make lint
-
   test:
     <<: *defaults
     steps:
-      - attach_workspace:
-          at: /tmp/workspace
-      - restore_cache:
-          key: v1-pkg-cache
-      - restore_cache:
-          key: v1-tree-{{ .Environment.CIRCLE_SHA1 }}
+      - checkout
       - run:
           name: Test
           command: |
-            export PATH="${GOBIN}:${PATH}"
             make test
+  build:
+    <<: *defaults
+    steps:
+      - checkout
+      - run:
+          name: Build
+          command: |
+            make build
+      - persist_to_workspace:
+          root: build
+          paths:
+            - "*"
+  release:
+    <<: *defaults
+    steps:
+      - checkout
+      - attach_workspace:
+          at: /go/src/github.com/interchainio/tm-load-test/build
+      - run:
+          name: Release
+          command: |
+            /bin/bash .circleci/release.bash
 
 workflows:
   version: 2
 
-  build:
+  mini_qa:
     jobs:
-      - setup_dependencies
-      - lint:
+      - lint
+      - test
+      - build
+  release_management:
+    jobs:
+      - build:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v[0-9]+\.[0-9]+/
+      - release:
           requires:
-            - setup_dependencies
-      - test:
-          requires:
-            - setup_dependencies
+            - build
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v[0-9]+\.[0-9]+/
