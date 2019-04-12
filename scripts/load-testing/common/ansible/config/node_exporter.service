@@ -1,0 +1,17 @@
+[Unit]
+Description=Prometheus Node Exporter Service
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+Restart=on-failure
+User=root
+Group=root
+PermissionsStartOnly=true
+ExecStart=/usr/bin/node_exporter
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=node_exporter
+
+[Install]
+WantedBy=multi-user.target
