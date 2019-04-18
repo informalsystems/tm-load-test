@@ -46,7 +46,7 @@ func longPoll(req *http.Request, singlePollTimeout, longPollTimeout time.Duratio
 		if time.Since(lastPoll) < time.Second {
 			time.Sleep(time.Second)
 		}
-		lastPoll := time.Now()
+		lastPoll = time.Now()
 		attempt++
 	}
 }
