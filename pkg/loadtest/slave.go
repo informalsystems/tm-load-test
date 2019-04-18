@@ -352,7 +352,6 @@ func (s *Slave) sendProgressToMaster(interactionCount int64) error {
 }
 
 func (s *Slave) countInteractions() {
-	lastCheckin := time.Now()
 	interactions := int64(0)
 	updateTicker := time.NewTicker(DefaultSlaveUpdateInterval)
 loop:
