@@ -50,7 +50,7 @@ const (
 // Encapsulates objects relevant to the slave's Prometheus server.
 type slavePrometheusServer struct {
 	logger logging.Logger
-	srv    *http.Server
+	svr    *http.Server
 
 	wg sync.WaitGroup
 
@@ -338,7 +338,7 @@ func (s *Slave) sendProgressToMaster(interactionCount int64) error {
 	reqURL := fmt.Sprintf("%s/slave/%s/interactions", s.cfg.Slave.Master, s.getID())
 
 	progress := fmt.Sprintf("%.1f", float64(100)*(float64(interactionCount)/float64(s.maxInteractions)))
-	s.logger.Debug("Sending progress update to master", "url", reqURL, "count", interactionCount, "progress", progress)
+	s.logger.Info("Sending progress update to master", "url", reqURL, "count", interactionCount, "progress", progress)
 	client := &http.Client{
 		Timeout: DefaultSlaveUpdateTimeout,
 	}
@@ -427,7 +427,7 @@ func newSlavePrometheusServer(addr string, logger logging.Logger) (*slavePrometh
 	mux.Handle("/metrics", promhttp.Handler())
 	return &slavePrometheusServer{
 		logger: logger,
-		srv: &http.Server{
+		svr: &http.Server{
 			Addr:    resolvedAddr,
 			Handler: mux,
 		},
@@ -435,10 +435,10 @@ func newSlavePrometheusServer(addr string, logger logging.Logger) (*slavePrometh
 }
 
 func (s *slavePrometheusServer) start() error {
-	errc := make(chan error, 1)
+	errc := make(chan error)
 	s.wg.Add(1)
 	go func() {
-		if err := s.srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.svr.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.logger.Error("Prometheus server failed", "err", err)
 			errc <- err
 		} else {
@@ -455,10 +455,9 @@ func (s *slavePrometheusServer) start() error {
 
 	// it should be up by now
 	case <-time.After(100 * time.Millisecond):
-		break
 	}
 	s.setStarted()
-	s.logger.Info("Successfully started Prometheus server", "addr", s.srv.Addr)
+	s.logger.Info("Successfully started Prometheus server", "addr", s.svr.Addr)
 	return nil
 }
 
@@ -467,7 +466,7 @@ func (s *slavePrometheusServer) shutdown() error {
 		return nil
 	}
 	defer s.wg.Wait()
-	return s.srv.Shutdown(context.Background())
+	return s.svr.Shutdown(context.Background())
 }
 
 // TODO: Do we need a mutex here?

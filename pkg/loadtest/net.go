@@ -28,7 +28,7 @@ func longPoll(req *http.Request, singlePollTimeout, longPollTimeout time.Duratio
 				// all's good
 				return res, nil
 			} else if res.StatusCode >= 400 {
-				return res, fmt.Errorf("request failed", "code", res.StatusCode)
+				return res, fmt.Errorf("request failed with status code %d", res.StatusCode)
 			} else {
 				logger.Debug("Server not ready yet")
 			}

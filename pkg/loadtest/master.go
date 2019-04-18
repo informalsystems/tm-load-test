@@ -1,6 +1,7 @@
 package loadtest
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"time"
@@ -30,7 +31,10 @@ type Master struct {
 	readyCheckTicker *time.Ticker // For checking whether the master's ready to go
 	checkinTicker    *time.Ticker
 
+	wg sync.WaitGroup // Wait group for managing the HTTP server shutdown process.
+
 	mtx              sync.Mutex
+	flagStarted      bool                 // Flag to indicate whether or not the HTTP server's been started.
 	flagReady        bool                 // Flag that's set to true when the master is ready to start load testing.
 	flagKill         bool                 // Flag that's set to true when the master is to be killed.
 	interactionCount map[string]int64     // A mapping of slave IDs to interaction counts
@@ -65,6 +69,69 @@ func (m *Master) handleSlaveRequest(w http.ResponseWriter, req *http.Request) {
 // Run executes the entirety of the master's operation in the current goroutine,
 // and only returns once the load testing is done (or has failed).
 func (m *Master) Run() error {
+	defer m.shutdown()
+	return m.run()
+}
+
+func (m *Master) run() error {
+	if err := m.startHTTPServer(); err != nil {
+		return err
+	}
+	if err := m.waitForSlaves(); err != nil {
+		return err
+	}
+	if err := m.startLoadTesting(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *Master) startHTTPServer() error {
+	errc := make(chan error, 1)
+	m.wg.Add(1)
+	go func() {
+		if err := m.svr.ListenAndServe(); err != nil {
+			m.logger.Error("Failed to start master HTTP server", "err", err)
+			errc <- err
+		} else {
+			m.logger.Info("Successfully shut down master HTTP server")
+		}
+		m.wg.Done()
+	}()
+
+	// wait for the server to start
+	select {
+	case err := <-errc:
+		return err
+
+	case <-time.After(100 * time.Millisecond):
+	}
+	m.setStarted()
+	m.logger.Info("Started master HTTP server", "addr", m.svr.Addr)
+	return nil
+}
+
+func (m *Master) shutdownHTTPServer() {
+	if !m.hasStarted() {
+		return
+	}
+
+	defer m.wg.Wait()
+	if err := m.svr.Shutdown(context.Background()); err != nil {
+		m.logger.Error("Failed to gracefully shut down HTTP server", "err", err)
+	}
+}
+
+func (m *Master) shutdown() {
+	m.logger.Info("Shutting down")
+	m.shutdownHTTPServer()
+}
+
+func (m *Master) waitForSlaves() error {
+	return nil
+}
+
+func (m *Master) startLoadTesting() error {
 	return nil
 }
 
@@ -87,6 +154,18 @@ func (m *Master) mustKill() bool {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
 	return m.flagKill
+}
+
+func (m *Master) setStarted() {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	m.flagStarted = true
+}
+
+func (m *Master) hasStarted() bool {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	return m.flagStarted
 }
 
 // func (m *Master) onStartup(ctx actor.Context) {
