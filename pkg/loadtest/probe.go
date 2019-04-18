@@ -21,19 +21,15 @@ func (p *NoopProbe) OnShutdown(ctx actor.Context, err error) {}
 func (p *NoopProbe) OnStopped(ctx actor.Context)             {}
 
 type StandardProbe struct {
-	mtx *sync.Mutex
-	wg  *sync.WaitGroup
+	mtx sync.Mutex
+	wg  sync.WaitGroup
 	err error
 }
 
 func NewStandardProbe() *StandardProbe {
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	return &StandardProbe{
-		mtx: &sync.Mutex{},
-		wg:  wg,
-		err: nil,
-	}
+	p := &StandardProbe{}
+	p.wg.Add(1)
+	return p
 }
 
 func (p *StandardProbe) OnStartup(ctx actor.Context) {}

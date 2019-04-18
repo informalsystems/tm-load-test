@@ -6,11 +6,12 @@ require (
 	github.com/AsynkronIT/protoactor-go v0.0.0-20190403221055-8d830365195e
 	github.com/BurntSushi/toml v0.3.1
 	github.com/btcsuite/btcd v0.0.0-20190410025418-9bfb2ca0346b // indirect
+	github.com/go-kit/kit v0.8.0 // indirect
+	github.com/go-logfmt/logfmt v0.4.0 // indirect
 	github.com/gogo/protobuf v1.2.1
 	github.com/gorilla/websocket v1.4.0 // indirect
-	github.com/kisielk/errcheck v1.2.0 // indirect
-	github.com/prometheus/client_model v0.0.0-20190129233127-fd36f4220a90
-	github.com/prometheus/common v0.3.0
+	github.com/pkg/errors v0.8.1 // indirect
+	github.com/prometheus/client_golang v0.9.2
 	github.com/rcrowley/go-metrics v0.0.0-20181016184325-3113b8401b8a // indirect
 	github.com/rs/cors v1.6.0 // indirect
 	github.com/satori/go.uuid v1.2.0
