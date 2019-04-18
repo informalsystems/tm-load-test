@@ -8,7 +8,6 @@ import (
 	"syscall"
 
 	"github.com/sirupsen/logrus"
-	"github.com/interchainio/tm-load-test/pkg/loadtest/messages"
 )
 
 // Run must be executed from your `main` function in your Go code. This can be
@@ -80,8 +79,7 @@ func RunMaster(configFile string) error {
 // RunMasterWithConfig runs a master node with the given configuration and
 // blocks until the testing is complete or it fails.
 func RunMasterWithConfig(cfg *Config) error {
-	probe := NewStandardProbe()
-	mpid, ctx, err := NewMaster(cfg, probe)
+	master, err := NewMaster(cfg)
 	if err != nil {
 		return err
 	}
@@ -89,10 +87,10 @@ func RunMasterWithConfig(cfg *Config) error {
 	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	go func() {
 		<-sigc
-		ctx.Send(mpid, &messages.Kill{})
+		master.Kill()
 	}()
 	// wait for the master node to terminate
-	return probe.Wait()
+	return master.Run()
 }
 
 // RunSlave will build and execute a slave node for load testing and will block
@@ -108,8 +106,7 @@ func RunSlave(configFile string) error {
 // RunSlaveWithConfig runs a slave node with the given configuration and blocks
 // until the testing is complete or it fails.
 func RunSlaveWithConfig(cfg *Config) error {
-	probe := NewStandardProbe()
-	spid, ctx, err := NewSlave(cfg, probe)
+	slave, err := NewSlave(cfg)
 	if err != nil {
 		return err
 	}
@@ -117,7 +114,7 @@ func RunSlaveWithConfig(cfg *Config) error {
 	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	go func() {
 		<-sigc
-		ctx.Send(spid, &messages.Kill{})
+		slave.Kill()
 	}()
-	return probe.Wait()
+	return slave.Run()
 }

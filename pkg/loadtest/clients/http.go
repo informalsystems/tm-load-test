@@ -1,0 +1,195 @@
+package clients
+
+import (
+	"bytes"
+	"fmt"
+	"math/rand"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/tendermint/tendermint/rpc/client"
+)
+
+// KVStoreHTTPFactoryProducer instantiates our KVStoreHTTPFactory instance for
+// use from within a slave.
+type KVStoreHTTPFactoryProducer struct{}
+
+// KVStoreHTTPFactory allows us to build RPC clients for interaction with
+// Tendermint nodes running the `kvstore` ABCI application (via the HTTP RPC
+// endpoints).
+type KVStoreHTTPFactory struct {
+	cfg     Config
+	targets []string
+}
+
+// KVStoreHTTPClient is a load testing client that interacts with multiple
+// different Tendermint nodes in a Tendermint network running the `kvstore` ABCI
+// application (via the HTTP RPC endpoints).
+type KVStoreHTTPClient struct {
+	factory *KVStoreHTTPFactory // The factory to which this client belongs.
+	targets []*client.HTTP      // RPC targets
+}
+
+// KVStoreHTTPMetrics helps represent either interactions' or requests'
+// statistics.
+type KVStoreHTTPMetrics struct {
+	Count         prometheus.Counter
+	Failures      prometheus.Counter
+	ResponseTimes prometheus.Histogram
+}
+
+// KVStoreHTTPCombinedMetrics encapsulates the metrics relevant to the load test.
+type KVStoreHTTPCombinedMetrics struct {
+	Interactions *KVStoreHTTPMetrics
+
+	// Request-related metrics
+	Requests map[string]*KVStoreHTTPMetrics
+}
+
+// KVStoreHTTPFactoryProducer implements FactoryProducer.
+var _ FactoryProducer = (*KVStoreHTTPFactoryProducer)(nil)
+
+// KVStoreHTTPFactory implements Factory.
+var _ Factory = (*KVStoreHTTPFactory)(nil)
+
+// KVStoreHTTPClient implements Client.
+var _ Client = (*KVStoreHTTPClient)(nil)
+
+var kvstoreHTTPMetrics *KVStoreHTTPCombinedMetrics
+
+func init() {
+	RegisterFactoryProducer("kvstore-http", &KVStoreHTTPFactoryProducer{})
+}
+
+func newKVStoreHTTPMetrics(kind, desc, host string) *KVStoreHTTPMetrics {
+	return &KVStoreHTTPMetrics{
+		Count: promauto.NewCounter(
+			prometheus.CounterOpts{
+				Name: fmt.Sprintf("loadtest_kvstorehttp_%s_%s_total", kind, host),
+				Help: fmt.Sprintf("Total number of %s with the kvstore app via the HTTP RPC during load testing", desc),
+			},
+		),
+		Failures: promauto.NewCounter(
+			prometheus.CounterOpts{
+				Name: fmt.Sprintf("loadtest_kvstorehttp_%s_%s_failures_total", kind, host),
+				Help: fmt.Sprintf("Number of %s failures with the kvstore app via the HTTP RPC during load testing", desc),
+			},
+		),
+		ResponseTimes: promauto.NewHistogram(
+			prometheus.HistogramOpts{
+				Name: fmt.Sprintf("loadtest_kvstorehttp_%s_%s_response_times", kind, host),
+				Help: fmt.Sprintf("Response time histogram for %s with the kvstore app via the HTTP RPC during load testing", desc),
+			},
+		),
+	}
+}
+
+// ----------------------------------------------------------------------------
+// KVStoreHTTPFactoryProducer
+//
+
+// New instantiates a KVStoreHTTPFactory with the given parameters.
+func (p *KVStoreHTTPFactoryProducer) New(cfg Config, host string, targets []string) Factory {
+	kvstoreHTTPMetrics = &KVStoreHTTPCombinedMetrics{
+		Interactions: newKVStoreHTTPMetrics("interactions", "interactions", host),
+		Requests: map[string]*KVStoreHTTPMetrics{
+			"broadcast_tx_sync": newKVStoreHTTPMetrics("broadcast_tx_sync", "broadcast_tx_sync requests", host),
+			"abci_query":        newKVStoreHTTPMetrics("abci_query", "abci_query requests", host),
+		},
+	}
+	return &KVStoreHTTPFactory{
+		cfg:     cfg,
+		targets: targets,
+	}
+}
+
+// ----------------------------------------------------------------------------
+// KVStoreHTTPFactory
+//
+
+// New instantiates a new client for interaction with a Tendermint
+// network.
+func (f *KVStoreHTTPFactory) New() Client {
+	return NewKVStoreHTTPClient(f)
+}
+
+// ----------------------------------------------------------------------------
+// KVStoreHTTPClient
+//
+
+// NewKVStoreHTTPClient instantiates a Tendermint RPC-based load testing client.
+func NewKVStoreHTTPClient(factory *KVStoreHTTPFactory) *KVStoreHTTPClient {
+	targets := make([]*client.HTTP, 0)
+	for _, url := range factory.targets {
+		targets = append(targets, client.NewHTTP(url, "/websocket"))
+	}
+	return &KVStoreHTTPClient{
+		factory: factory,
+		targets: targets,
+	}
+}
+
+func (c *KVStoreHTTPClient) randomTarget() *client.HTTP {
+	return c.targets[rand.Intn(len(c.targets))]
+}
+
+func (c *KVStoreHTTPClient) measureInteraction(fn func() error) {
+	timeTaken, err := TimeFn(fn)
+	kvstoreHTTPMetrics.Interactions.ResponseTimes.Observe(timeTaken.Seconds())
+
+	if err != nil {
+		kvstoreHTTPMetrics.Interactions.Failures.Inc()
+	}
+	// we always increment the number of interactions
+	kvstoreHTTPMetrics.Interactions.Count.Inc()
+}
+
+func (c *KVStoreHTTPClient) measureRequest(reqID string, fn func() error) error {
+	startTime := time.Now()
+	err := fn()
+	timeTaken := time.Since(startTime)
+	kvstoreHTTPMetrics.Requests[reqID].ResponseTimes.Observe(timeTaken.Seconds())
+
+	if err != nil {
+		kvstoreHTTPMetrics.Requests[reqID].Failures.Inc()
+	}
+	kvstoreHTTPMetrics.Requests[reqID].Count.Inc()
+
+	return err
+}
+
+// Interact will attempt to put a value into a Tendermint node, and then, after
+// a small delay, attempt to retrieve it.
+func (c *KVStoreHTTPClient) Interact() {
+	c.measureInteraction(func() error {
+		RandomSleep(c.factory.cfg.RequestWaitMin.Duration(), c.factory.cfg.RequestWaitMax.Duration())
+		k, v, tx := MakeTxKV()
+		err := c.measureRequest("broadcast_tx_sync", func() error {
+			_, err := c.randomTarget().BroadcastTxSync(tx)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+
+		RandomSleep(c.factory.cfg.RequestWaitMin.Duration(), c.factory.cfg.RequestWaitMax.Duration())
+		return c.measureRequest("abci_query", func() error {
+			qres, err := c.randomTarget().ABCIQuery("/key", k)
+			if err != nil {
+				return err
+			}
+			if qres.Response.IsErr() {
+				return fmt.Errorf("Failed to execute ABCIQuery: %s", qres.Response.String())
+			}
+			if len(qres.Response.Value) == 0 {
+				return fmt.Errorf("Key/value pair could not be found")
+			}
+			if !bytes.Equal(v, qres.Response.Value) {
+				return fmt.Errorf("Retrieved value does not match stored value")
+			}
+			return nil
+		})
+	})
+}
