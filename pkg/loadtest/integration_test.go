@@ -34,8 +34,8 @@ expect_start_within = "1m"
 [clients]
 type = "kvstore-http"
 additional_params = ""
-spawn = 1
-spawn_rate = 1.0
+spawn = 10
+spawn_rate = 10.0
 max_interactions = 1
 interaction_timeout = "11s"
 max_test_time = "10m"
@@ -112,8 +112,8 @@ func TestKVStoreHTTPIntegrationWithTendermintNode(t *testing.T) {
 			if r.err != nil {
 				t.Error(r.err)
 			}
-			if r.summary.Interactions != 2 {
-				t.Errorf("expected 2 interactions from master, but got %d", r.summary.Interactions)
+			if r.summary.Interactions != 20 {
+				t.Errorf("expected 20 interactions from master, but got %d", r.summary.Interactions)
 			}
 
 		case r := <-slave1Chan:
@@ -121,8 +121,8 @@ func TestKVStoreHTTPIntegrationWithTendermintNode(t *testing.T) {
 			if r.err != nil {
 				t.Error(r.err)
 			}
-			if r.summary.Interactions != 1 {
-				t.Errorf("expected 1 interaction from slave 1, but got %d", r.summary.Interactions)
+			if r.summary.Interactions != 10 {
+				t.Errorf("expected 10 interactions from slave 1, but got %d", r.summary.Interactions)
 			}
 
 		case r := <-slave2Chan:
@@ -130,8 +130,8 @@ func TestKVStoreHTTPIntegrationWithTendermintNode(t *testing.T) {
 			if r.err != nil {
 				t.Error(r.err)
 			}
-			if r.summary.Interactions != 1 {
-				t.Errorf("expected 1 interaction from slave 2, but got %d", r.summary.Interactions)
+			if r.summary.Interactions != 10 {
+				t.Errorf("expected 10 interactions from slave 2, but got %d", r.summary.Interactions)
 			}
 
 		case <-time.After(maxTestTime):

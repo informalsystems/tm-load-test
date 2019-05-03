@@ -255,11 +255,11 @@ func (s *Slave) doLoadTest() error {
 	s.trackTestStart()
 	var wg sync.WaitGroup
 	// spawn all of our clients in batches
-	for totalSpawned := int64(0); totalSpawned < s.maxInteractions; totalSpawned += int64(rate) {
+	for totalSpawned := int64(0); totalSpawned < int64(s.cfg.Clients.Spawn); totalSpawned += int64(rate) {
 		toSpawn := int64(rate)
-		// make sure we only spawn precisely s.maxInteractions clients
-		if (totalSpawned + int64(toSpawn)) > s.maxInteractions {
-			toSpawn = s.maxInteractions - totalSpawned
+		// make sure we only spawn precisely the required number of clients
+		if (totalSpawned + int64(toSpawn)) > int64(s.cfg.Clients.Spawn) {
+			toSpawn = int64(s.cfg.Clients.Spawn) - totalSpawned
 		}
 		// spawn a batch
 		s.spawnClientBatch(toSpawn, &wg)
