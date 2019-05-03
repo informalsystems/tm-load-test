@@ -1,7 +1,8 @@
 package loadtest
 
 import (
-	"context"
+	"fmt"
+	"math/rand"
 	"net/http"
 	"sync"
 	"time"
@@ -10,428 +11,363 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// DefaultMasterCheckinInterval is the interval at which the master makes sure
-// that all slaves have checked in.
-const DefaultMasterCheckinInterval = DefaultSlaveUpdateInterval / 3
-
-// Master is an actor that coordinates and collects information from the slaves,
-// which are responsible for the actual load testing.
+// Master is an entity that coordinates the load testing across multiple slave
+// nodes, tracking progress and failures.
 type Master struct {
 	cfg    *Config
 	logger logging.Logger
 
-	svr *http.Server // The primary master server HTTP interface (for metrics and slave endpoints).
+	svr *baseServer
 
-	// For high-level progress tracking
-	loadTestStartTime    time.Time
-	loadTestEndTime      time.Time
-	loadTestDuration     time.Duration
-	expectedInteractions int64
+	mtx         sync.Mutex
+	summary     *Summary
+	startTime   time.Time
+	slaves      map[string]*remoteSlave
+	flagKill    bool
+	shutdownErr error
 
-	readyCheckTicker *time.Ticker // For checking whether the master's ready to go
-	checkinTicker    *time.Ticker
+	// For tracking HTTP long polling requests that're waiting for the go-ahead
+	// to start testing.
+	readySubscribers map[int]chan bool
 
-	wg sync.WaitGroup // Wait group for managing the HTTP server shutdown process.
-
-	mtx              sync.Mutex
-	flagStarted      bool                 // Flag to indicate whether or not the HTTP server's been started.
-	flagReady        bool                 // Flag that's set to true when the master is ready to start load testing.
-	flagKill         bool                 // Flag that's set to true when the master is to be killed.
-	interactionCount map[string]int64     // A mapping of slave IDs to interaction counts
-	lastCheckin      map[string]time.Time // The last time we received a "load testing underway" message from each slave (ID -> last checkin time)
+	slavec chan slaveRequest
 }
 
-// NewMaster instantiates a master node, ready to be executed.
+type slaveRequest struct {
+	slave remoteSlave
+	errc  chan error
+}
+
+type stillWaitingForSlaves struct{}
+
+var _ error = (*stillWaitingForSlaves)(nil)
+
+// NewMaster instantiates a new master node for load testing.
 func NewMaster(cfg *Config) (*Master, error) {
 	logger := logging.NewLogrusLogger("master")
-	logger.Debug("Creating master")
-	master := &Master{
-		cfg:                  cfg,
-		logger:               logger,
-		expectedInteractions: int64(cfg.Clients.MaxInteractions) * int64(cfg.Clients.Spawn),
-		interactionCount:     make(map[string]int64),
-		lastCheckin:          make(map[string]time.Time),
+	m := &Master{
+		cfg:              cfg,
+		logger:           logger,
+		summary:          &Summary{},
+		slaves:           make(map[string]*remoteSlave),
+		readySubscribers: make(map[int]chan bool),
+		slavec:           make(chan slaveRequest, cfg.Master.ExpectSlaves),
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
-	mux.HandleFunc("/slave/", master.handleSlaveRequest)
-	master.svr = &http.Server{
-		Addr:    cfg.Master.Bind,
-		Handler: mux,
+	mux.HandleFunc("/slave", m.handleSlaveRequest)
+	svr, err := newBaseServer(cfg.Master.Bind, mux, logger)
+	if err != nil {
+		return nil, err
 	}
-	return master, nil
+	m.svr = svr
+	// set the random seed for generating readiness subscriber IDs
+	rand.Seed(time.Now().UnixNano())
+	return m, nil
 }
 
-func (m *Master) handleSlaveRequest(w http.ResponseWriter, req *http.Request) {
-
-}
-
-// Run executes the entirety of the master's operation in the current goroutine,
-// and only returns once the load testing is done (or has failed).
-func (m *Master) Run() error {
+// Run executes the entire load test synchronously, exiting only once the load
+// test completes or fails.
+func (m *Master) Run() (*Summary, error) {
+	if err := m.svr.start(); err != nil {
+		return nil, NewError(ErrMasterFailed, err)
+	}
 	defer m.shutdown()
-	return m.run()
-}
 
-func (m *Master) run() error {
-	if err := m.startHTTPServer(); err != nil {
-		return err
-	}
 	if err := m.waitForSlaves(); err != nil {
-		return err
+		return nil, m.fail(err)
 	}
-	if err := m.startLoadTesting(); err != nil {
-		return err
+
+	if err := m.doLoadTest(); err != nil {
+		m.fail(err) // nolint: errcheck
 	}
-	return nil
+
+	return m.getSummary(), m.getShutdownErr()
 }
 
-func (m *Master) startHTTPServer() error {
-	errc := make(chan error, 1)
-	m.wg.Add(1)
+func (m *Master) waitForSlaves() error {
+	slavesConnected := make(chan struct{})
+	killc := make(chan struct{})
 	go func() {
-		if err := m.svr.ListenAndServe(); err != nil {
-			m.logger.Error("Failed to start master HTTP server", "err", err)
-			errc <- err
-		} else {
-			m.logger.Info("Successfully shut down master HTTP server")
+		killCheckTicker := time.NewTicker(100 * time.Millisecond)
+	connectLoop:
+		for {
+			select {
+			case msg := <-m.slavec:
+				msg.errc <- m.addSlave(&msg.slave)
+				if m.ready() {
+					m.logger.Info("All expected slaves have connected", "count", len(m.slaves))
+					m.broadcastReady()
+					m.trackStartTime()
+					break connectLoop
+				}
+
+			case <-killCheckTicker.C:
+				if m.killed() {
+					break connectLoop
+				}
+
+			case <-killc:
+				break connectLoop
+			}
 		}
-		m.wg.Done()
+		close(slavesConnected)
 	}()
-
-	// wait for the server to start
+	// we have a deadline for the slaves to all connect
 	select {
-	case err := <-errc:
-		return err
+	case <-slavesConnected:
+		return nil
 
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(m.cfg.Master.ExpectSlavesWithin.Duration()):
+		// force the goroutine to terminate
+		close(killc)
+		<-slavesConnected
+		return NewError(ErrTimedOutWaitingForSlaves, nil)
 	}
-	m.setStarted()
-	m.logger.Info("Started master HTTP server", "addr", m.svr.Addr)
-	return nil
 }
 
-func (m *Master) shutdownHTTPServer() {
-	if !m.hasStarted() {
-		return
+func (m *Master) doLoadTest() error {
+	killCheckTicker := time.NewTicker(100 * time.Millisecond)
+	defer killCheckTicker.Stop()
+	for {
+		select {
+		case msg := <-m.slavec:
+			if err := m.handleMsgDuringTesting(msg); err != nil {
+				return err
+			}
+			if m.done() {
+				m.logger.Info("All slaves are finished with testing")
+				m.computeFinalStats()
+				return nil
+			}
+
+		case <-killCheckTicker.C:
+			if m.killed() {
+				return NewError(ErrMasterFailed, nil, "master killed")
+			}
+		}
+	}
+}
+
+func (m *Master) computeFinalStats() {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+
+	m.summary.Interactions = 0
+	for _, slave := range m.slaves {
+		m.summary.Interactions += slave.Interactions
+	}
+	m.summary.TotalTestTime = time.Since(m.startTime)
+}
+
+func (m *Master) handleMsgDuringTesting(msg slaveRequest) error {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+
+	slave, exists := m.slaves[msg.slave.ID]
+	if !exists {
+		msg.errc <- fmt.Errorf("unrecognised slave ID")
+		return nil
+	}
+	if slave.State == slaveFailed || slave.State == slaveFinished {
+		msg.errc <- fmt.Errorf("cannot modify slave state once failed or finished")
+		return nil
 	}
 
-	defer m.wg.Wait()
-	if err := m.svr.Shutdown(context.Background()); err != nil {
-		m.logger.Error("Failed to gracefully shut down HTTP server", "err", err)
+	var err error
+	switch msg.slave.State {
+	case slaveAccepted:
+		msg.errc <- fmt.Errorf("invalid slave state")
+		return nil
+
+	case slaveFailed:
+		err = NewError(ErrSlaveFailed, nil, "slave failed")
+	}
+	// if it's still testing (a progress update), finished or failed
+	msg.errc <- nil
+	slave.update(&msg.slave)
+	return err
+}
+
+func (m *Master) done() bool {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	for _, slave := range m.slaves {
+		if slave.State == slaveTesting || slave.State == slaveAccepted {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Master) addSlave(slave *remoteSlave) error {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+
+	if _, exists := m.slaves[slave.ID]; !exists {
+		if len(m.slaves) == m.cfg.Master.ExpectSlaves {
+			return fmt.Errorf("too many slaves")
+		}
+		if slave.State != slaveAccepted {
+			return fmt.Errorf("slave must be accepted before it can change state")
+		}
+		m.slaves[slave.ID] = slave
+		m.logger.Info("Added slave", "slaveID", slave.ID)
+		return nil
+	}
+
+	switch slave.State {
+	case slaveAccepted:
+		return fmt.Errorf("slave already exists")
+
+	case slaveTesting:
+		return &stillWaitingForSlaves{}
+
+	case slaveFailed:
+		delete(m.slaves, slave.ID)
+		m.logger.Info("Removed failed slave", "slaveID", slave.ID)
+		return nil
+	}
+	return fmt.Errorf("invalid state")
+}
+
+func (m *Master) ready() bool {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	return len(m.slaves) == m.cfg.Master.ExpectSlaves
+}
+
+// NOTE: Not thread-safe
+func (m *Master) broadcastReady() {
+	for _, ch := range m.readySubscribers {
+		ch <- true
 	}
 }
 
 func (m *Master) shutdown() {
 	m.logger.Info("Shutting down")
-	m.shutdownHTTPServer()
+	if err := m.svr.shutdown(); err != nil {
+		m.logger.Error("Failed to shut down HTTP server", "err", err)
+	}
+	if err := m.getShutdownErr(); err != nil {
+		m.logger.Error("Master failed", "err", err)
+	} else {
+		m.logger.Info("Master shut down successfully")
+	}
 }
 
-func (m *Master) waitForSlaves() error {
-	return nil
-}
-
-func (m *Master) startLoadTesting() error {
-	return nil
-}
-
-// Kill attempts to gracefully kill the master node, allowing it to shut down
-// properly before terminating. This is an asynchronous process, however, and
-// the master will still only effectively finish terminating once the Run
-// function completes.
-func (m *Master) Kill() {
-	m.logger.Info("Killing master...")
-	m.setKill()
-}
-
-func (m *Master) setKill() {
+func (m *Master) fail(err error) error {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
 	m.flagKill = true
+	m.shutdownErr = err
+	return err
 }
 
-func (m *Master) mustKill() bool {
+// Kill signals to the master that it must be killed. This occurs
+// asynchronously, resulting in the termination of the `Run` method.
+func (m *Master) Kill() {
+	m.logger.Info("Killing master node")
+	m.fail(NewError(ErrMasterFailed, nil, "master was killed")) // nolint: errcheck
+}
+
+func (m *Master) killed() bool {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
 	return m.flagKill
 }
 
-func (m *Master) setStarted() {
+func (m *Master) getShutdownErr() error {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
-	m.flagStarted = true
+	return m.shutdownErr
 }
 
-func (m *Master) hasStarted() bool {
+func (m *Master) trackStartTime() {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
-	return m.flagStarted
+	m.startTime = time.Now()
 }
 
-// func (m *Master) onStartup(ctx actor.Context) {
-// 	m.logger.Info("Starting up master node", "addr", ctx.Self().String())
-// 	go func(ctx_ actor.Context) {
-// 		time.Sleep(time.Duration(m.cfg.Master.ExpectSlavesWithin))
-// 		ctx_.Send(ctx_.Self(), &messages.CheckAllSlavesConnected{})
-// 	}(ctx)
-// 	if m.probe != nil {
-// 		m.probe.OnStartup(ctx)
-// 	}
-// }
+func (m *Master) getSummary() *Summary {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	summaryCopy := *m.summary
+	return &summaryCopy
+}
 
-// func (m *Master) onStopped(ctx actor.Context) {
-// 	m.logger.Info("Master node stopped")
-// 	if m.probe != nil {
-// 		m.probe.OnStopped(ctx)
-// 	}
-// }
+func (m *Master) handleSlaveRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		jsonResponse(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var slave remoteSlave
+	if err := fromJSONReadCloser(r.Body, &slave); err != nil {
+		jsonResponse(w, fmt.Sprintf("Failed to parse message body: %v", err), http.StatusBadRequest)
+		return
+	}
 
-// func (m *Master) checkAllSlavesConnected(ctx actor.Context, msg *messages.CheckAllSlavesConnected) {
-// 	if m.slaves.Len() != m.cfg.Master.ExpectSlaves {
-// 		m.logger.Error("Timed out waiting for all slaves to connect", "slaveCount", m.slaves.Len(), "expected", m.cfg.Master.ExpectSlaves)
-// 		m.broadcast(ctx, &messages.MasterFailed{
-// 			Sender: ctx.Self(),
-// 			Reason: "Timed out waiting for all slaves to connect",
-// 		})
-// 		m.shutdown(ctx, NewError(ErrTimedOutWaitingForSlaves, nil))
-// 	} else {
-// 		m.logger.Debug("All slaves connected within timeout limit - no need to terminate master")
-// 	}
-// }
+	// pass the message on to the master's event loop to be handled and wait for
+	// a response
+	req := slaveRequest{
+		slave: slave,
+		errc:  make(chan error, 1),
+	}
+	m.slavec <- req
+	err := <-req.errc
+	if err == nil {
+		jsonResponse(w, "OK", http.StatusOK)
+		return
+	}
 
-// func (m *Master) slaveReady(ctx actor.Context, msg *messages.SlaveReady) {
-// 	slave := msg.Sender
-// 	slaveID := slave.String()
-// 	m.logger.Info("Got SlaveReady message", "id", slaveID)
-// 	// keep track of this new incoming slave
-// 	if m.slaves.Contains(slave) {
-// 		m.logger.Error("Already seen slave before - rejecting", "id", slaveID)
-// 		ctx.Send(slave, &messages.SlaveRejected{
-// 			Sender: ctx.Self(),
-// 			Reason: "Already seen slave",
-// 		})
-// 	} else {
-// 		// keep track of the slave
-// 		m.slaves.Add(slave)
-// 		m.logger.Info("Added incoming slave", "slaveCount", m.slaves.Len(), "expected", m.cfg.Master.ExpectSlaves)
-// 		m.trackSlaveCheckin(slave.Id)
-// 		// tell the slave it's got the go-ahead
-// 		ctx.Send(slave, &messages.SlaveAccepted{Sender: ctx.Self()})
-// 		// if we have enough slaves to start the load testing
-// 		if m.slaves.Len() == m.cfg.Master.ExpectSlaves {
-// 			m.startLoadTest(ctx)
-// 		}
-// 	}
-// }
+	m.logger.Debug("Got error from slave request", "err", err)
 
-// func (m *Master) startLoadTest(ctx actor.Context) {
-// 	m.logger.Info("Accepted enough connected slaves - starting load test", "slaveCount", m.slaves.Len())
-// 	m.broadcast(ctx, &messages.StartLoadTest{Sender: ctx.Self()})
-// 	m.checkinTicker = time.NewTicker(DefaultHealthCheckInterval)
+	switch err.(type) {
+	case *stillWaitingForSlaves:
+		// facilitate the long polling wait until we're ready
+		id, readyc := m.registerReadySubscriber()
+		defer m.unregisterReadySubscriber(id)
+		select {
+		case ready := <-readyc:
+			if ready {
+				jsonResponse(w, "Ready!", http.StatusOK)
+			} else {
+				// probably another slave that failed
+				jsonResponse(w, "Failed", http.StatusServiceUnavailable)
+			}
 
-// 	// track the start time for the load test
-// 	m.mtx.Lock()
-// 	m.loadTestStartTime = time.Now()
-// 	m.mtx.Unlock()
+		case <-time.After(DefaultSlaveLongPollTimeout - (1 * time.Second)):
+			jsonResponse(w, "Not ready yet", http.StatusNotModified)
+		}
 
-// 	go m.slaveHealthChecker(ctx)
-// }
+	default:
+		jsonResponse(w, fmt.Sprintf("Error: %v", err), http.StatusBadRequest)
+	}
+}
 
-// func (m *Master) slaveHealthChecker(ctx actor.Context) {
-// loop:
-// 	for {
-// 		select {
-// 		case <-m.checkinTicker.C:
-// 			m.checkSlaveHealth(ctx)
+func (m *Master) registerReadySubscriber() (int, chan bool) {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	// find an unused subscriber ID
+	id := rand.Int()
+	_, exists := m.readySubscribers[id]
+	for exists {
+		id = rand.Int()
+		_, exists = m.readySubscribers[id]
+	}
 
-// 		case <-m.stopSlaveHealthChecker:
-// 			break loop
-// 		}
-// 	}
-// }
+	m.readySubscribers[id] = make(chan bool, 1)
+	return id, m.readySubscribers[id]
+}
 
-// func (m *Master) checkSlaveHealth(ctx actor.Context) {
-// 	m.mtx.Lock()
-// 	defer m.mtx.Unlock()
+func (m *Master) unregisterReadySubscriber(id int) {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	delete(m.readySubscribers, id)
+}
 
-// 	// we're only interested in slaves that are still connected
-// 	for _, slave := range m.slaves.Values() {
-// 		slaveID := slave.Id
-// 		lastSeen := m.lastCheckin[slaveID]
-// 		if time.Since(lastSeen) >= DefaultMaxMissedHealthCheckPeriod {
-// 			m.logger.Error("Failed to see slave recently enough", "slaveID", slaveID, "lastSeen", lastSeen.String())
-// 			ctx.Send(ctx.Self(), &messages.MasterFailed{
-// 				Sender: ctx.Self(),
-// 				Reason: fmt.Sprintf("Failed to see slave %s within %s", slaveID, DefaultMaxMissedHealthCheckPeriod.String()),
-// 			})
-// 			// don't bother checking any of the other slaves (plus this will
-// 			// most likely result in bombardment of the slaves with MasterFailed
-// 			// messages)
-// 			return
-// 		}
-// 	}
-// }
+//-----------------------------------------------------------------------------
 
-// func (m *Master) masterFailed(ctx actor.Context, msg *messages.MasterFailed) {
-// 	// rebroadcast this message to the slaves
-// 	m.broadcast(ctx, msg)
-// 	// we're done here
-// 	m.shutdown(ctx, NewError(ErrSlaveFailed, nil))
-// }
-
-// func (m *Master) trackSlaveCheckin(slaveID string) {
-// 	m.mtx.Lock()
-// 	defer m.mtx.Unlock()
-// 	m.lastCheckin[slaveID] = time.Now()
-// }
-
-// func (m *Master) broadcast(ctx actor.Context, msg interface{}) {
-// 	m.logger.Debug("Broadcasting message to all slaves", "msg", msg)
-// 	m.slaves.ForEach(func(i int, pid actor.PID) {
-// 		m.logger.Debug("Broadcasting message to slave", "pid", pid)
-// 		ctx.Send(&pid, msg)
-// 	})
-// }
-
-// func fmtTimeLeft(d time.Duration) string {
-// 	d = d.Round(time.Second)
-// 	h := d / time.Hour
-// 	d -= h * time.Hour
-// 	m := d / time.Minute
-// 	d -= m * time.Minute
-// 	s := d / time.Second
-// 	return fmt.Sprintf("%02dh%02dm%02ds", h, m, s)
-// }
-
-// func (m *Master) slaveUpdate(ctx actor.Context, msg *messages.SlaveUpdate) {
-// 	m.updateSlaveInteractionCount(msg.Sender.Id, msg.InteractionCount)
-
-// 	if m.dueForProgressUpdate() {
-// 		totalInteractions := m.totalSlaveInteractionCount()
-// 		completed := float64(100) * (float64(totalInteractions) / float64(m.expectedInteractions))
-// 		interactionsPerSec := float64(totalInteractions) / time.Since(m.loadTestStartTime).Seconds()
-// 		timeLeft := time.Duration(1000 * time.Hour)
-// 		if interactionsPerSec > 0 {
-// 			timeLeft = time.Duration((float64(m.expectedInteractions-totalInteractions) / interactionsPerSec) * float64(time.Second))
-// 		}
-// 		m.logger.Info(
-// 			"Progress update",
-// 			"completed", fmt.Sprintf("%.2f%%", completed),
-// 			"interactionsPerSec", fmt.Sprintf("%.2f", interactionsPerSec),
-// 			"approxTimeLeft", fmtTimeLeft(timeLeft),
-// 		)
-// 		m.progressUpdated()
-// 	}
-// }
-
-// func (m *Master) updateSlaveInteractionCount(slaveID string, count int64) {
-// 	m.mtx.Lock()
-// 	defer m.mtx.Unlock()
-// 	m.interactionCount[slaveID] = count
-// }
-
-// func (m *Master) totalSlaveInteractionCount() int64 {
-// 	m.mtx.Lock()
-// 	defer m.mtx.Unlock()
-
-// 	totalCount := int64(0)
-// 	for _, count := range m.interactionCount {
-// 		totalCount += count
-// 	}
-// 	return totalCount
-// }
-
-// func (m *Master) dueForProgressUpdate() bool {
-// 	m.mtx.Lock()
-// 	defer m.mtx.Unlock()
-
-// 	return time.Since(m.lastProgressUpdate) >= (20 * time.Second)
-// }
-
-// func (m *Master) progressUpdated() {
-// 	m.mtx.Lock()
-// 	defer m.mtx.Unlock()
-
-// 	m.lastProgressUpdate = time.Now()
-// }
-
-// func (m *Master) slaveFailed(ctx actor.Context, msg *messages.SlaveFailed) {
-// 	slave := msg.Sender
-// 	slaveID := slave.String()
-// 	m.logger.Error("Slave failed", "id", slaveID, "reason", msg.Reason)
-// 	m.slaves.Remove(slave)
-// 	m.broadcast(ctx, &messages.MasterFailed{Sender: ctx.Self(), Reason: "One other attached slave failed"})
-// 	m.shutdown(ctx, NewError(ErrSlaveFailed, nil))
-// }
-
-// func (m *Master) slaveFinished(ctx actor.Context, msg *messages.SlaveFinished) {
-// 	slave := msg.Sender
-// 	slaveID := slave.String()
-// 	m.logger.Info("Slave finished", "id", slaveID)
-// 	m.slaves.Remove(slave)
-// 	// if we've heard from all the slaves we accepted
-// 	if m.slaves.Len() == 0 {
-// 		m.logger.Info("All slaves successfully completed their load testing")
-// 		m.trackTestEndTime()
-// 		if err := m.sanityCheckStats(); err != nil {
-// 			m.logger.Error("Statistics sanity check failed", "err", err)
-// 			m.shutdown(ctx, err)
-// 		} else {
-// 			m.shutdown(ctx, nil)
-// 		}
-// 	}
-// }
-
-// func (m *Master) trackTestEndTime() {
-// 	m.mtx.Lock()
-// 	defer m.mtx.Unlock()
-// 	m.loadTestEndTime = time.Now()
-// 	m.loadTestDuration = m.loadTestEndTime.Sub(m.loadTestStartTime)
-// 	m.logger.Debug("Tracking total test duration", "TotalTestTime", m.loadTestDuration)
-// }
-
-// func (m *Master) kill(ctx actor.Context) {
-// 	m.logger.Error("Master killed")
-// 	m.broadcast(ctx, &messages.MasterFailed{Sender: ctx.Self(), Reason: "Master killed"})
-// 	m.shutdown(ctx, NewError(ErrKilled, nil))
-// }
-
-// func (m *Master) shutdown(ctx actor.Context, err error) {
-// 	// stop checking slave health
-// 	m.stopSlaveHealthChecker <- true
-// 	if err != nil {
-// 		m.logger.Error("Shutting down master node", "err", err)
-// 	} else {
-// 		m.logger.Info("Shutting down master node")
-// 	}
-// 	if m.probe != nil {
-// 		m.probe.OnShutdown(ctx, err)
-// 	}
-// 	ctx.Self().GracefulStop()
-// }
-
-// func (m *Master) sanityCheckStats() error {
-// 	expectedClients := m.cfg.Master.ExpectSlaves * m.cfg.Clients.Spawn
-// 	expectedInteractions := expectedClients * m.cfg.Clients.MaxInteractions
-// 	totalInteractions := m.totalInteractions()
-// 	if totalInteractions != int64(expectedInteractions) {
-// 		return NewError(
-// 			ErrStatsSanityCheckFailed,
-// 			nil,
-// 			fmt.Sprintf("Expected total interactions to be %d, but was %d", expectedInteractions, totalInteractions),
-// 		)
-// 	}
-
-// 	return nil
-// }
-
-// func (m *Master) totalInteractions() int64 {
-// 	m.mtx.Lock()
-// 	defer m.mtx.Unlock()
-
-// 	total := int64(0)
-// 	for _, count := range m.interactionCount {
-// 		total += count
-// 	}
-// 	return total
-// }
+func (e *stillWaitingForSlaves) Error() string {
+	return "still waiting for all slaves to connect"
+}

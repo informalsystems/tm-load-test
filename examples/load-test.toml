@@ -1,6 +1,6 @@
 [master]
 # The host IP/port to which to bind the master
-bind = "0.0.0.0:35000"
+bind = "127.0.0.1:35000"
 
 # How many slaves to expect to connect before starting the load test
 expect_slaves = 2
@@ -12,12 +12,12 @@ expect_slaves_within = "1m"
 [slave]
 # The IP address/port to which to bind the slave node. Leave out the port to
 # pick a random port.
-bind = "0.0.0.0:35000"
+bind = "127.0.0.1:"
 
 # IP address and port through which to reach the master (could be different
 # from the bind address above, e.g. if the master is bound to 0.0.0.0:35000,
 # we still need an external address through which to access the master).
-master = "192.168.1.10:35000"
+master = "http://127.0.0.1:35000"
 
 # How long to keep polling for the master before considering the master to have
 # failed to start up at all.
@@ -51,16 +51,8 @@ expect_start_within = "1m"
     # This array is only taken into account if test_network.autodetect.enabled
     # is set to false.
     [[test_network.targets]]
-    id = "host1"
-    url = "http://192.168.2.1:26657"
-
-    [[test_network.targets]]
-    id = "host2"
-    url = "http://192.168.2.2:26657"
-
-    [[test_network.targets]]
-    id = "host3"
-    url = "http://192.168.2.3:26657"
+    id = "localhost"
+    url = "http://localhost:26657"
 
 [clients]
 # What type of client to spawn. The `kvstore-http` client will interact with the
@@ -71,17 +63,17 @@ type = "kvstore-http"
 additional_params = ""
 
 # The number of clients to spawn per slave.
-spawn = 500
+spawn = 50
 
 # The rate at which new clients should be spawned on each slave, per second. A
 # value of 10 would mean that every second, 10 new clients will be spawned on
 # each slave. A value of 0.1 would mean that only 1 client will be spawned every
 # 10 seconds.
-spawn_rate = 10
+spawn_rate = 10.0
 
 # The maximum number of interactions to send, per client. Set to -1 to make this
 # "infinite", but then the `max_test_time` parameter MUST be set.
-max_interactions = 10000
+max_interactions = 100
 
 # After how long do we consider an interaction to have timed out?
 interaction_timeout = "11s"

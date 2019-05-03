@@ -9,6 +9,7 @@ type ErrorCode int
 // Error/exit codes for load testing-related errors.
 const (
 	NoError ErrorCode = iota
+	ErrCLIFailure
 	ErrFailedToDecodeConfig
 	ErrFailedToReadConfigFile
 	ErrInvalidConfig
@@ -56,6 +57,8 @@ func ErrorMessageForCode(code ErrorCode, additionalInfo ...string) string {
 	switch code {
 	case NoError:
 		result = "No error"
+	case ErrCLIFailure:
+		result = "Incorrect usage of CLI"
 	case ErrFailedToDecodeConfig:
 		result = "Failed to decode TOML configuration"
 	case ErrFailedToReadConfigFile:

@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/interchainio/tm-load-test/internal/logging"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -14,14 +15,19 @@ import (
 
 // KVStoreHTTPFactoryProducer instantiates our KVStoreHTTPFactory instance for
 // use from within a slave.
-type KVStoreHTTPFactoryProducer struct{}
+type KVStoreHTTPFactoryProducer struct {
+	logger logging.Logger
+}
 
 // KVStoreHTTPFactory allows us to build RPC clients for interaction with
 // Tendermint nodes running the `kvstore` ABCI application (via the HTTP RPC
 // endpoints).
 type KVStoreHTTPFactory struct {
-	cfg     Config
-	targets []string
+	producer *KVStoreHTTPFactoryProducer
+	cfg      Config
+	id       string // A unique identifier for this factory.
+	targets  []string
+	metrics  *KVStoreHTTPCombinedMetrics // Metrics for this factory's clients.
 }
 
 // KVStoreHTTPClient is a load testing client that interacts with multiple
@@ -57,12 +63,6 @@ var _ Factory = (*KVStoreHTTPFactory)(nil)
 // KVStoreHTTPClient implements Client.
 var _ Client = (*KVStoreHTTPClient)(nil)
 
-var kvstoreHTTPMetrics *KVStoreHTTPCombinedMetrics
-
-func init() {
-	RegisterFactoryProducer("kvstore-http", &KVStoreHTTPFactoryProducer{})
-}
-
 func newKVStoreHTTPMetrics(kind, desc, host string) *KVStoreHTTPMetrics {
 	return &KVStoreHTTPMetrics{
 		Count: promauto.NewCounter(
@@ -90,18 +90,29 @@ func newKVStoreHTTPMetrics(kind, desc, host string) *KVStoreHTTPMetrics {
 // KVStoreHTTPFactoryProducer
 //
 
-// New instantiates a KVStoreHTTPFactory with the given parameters.
-func (p *KVStoreHTTPFactoryProducer) New(cfg Config, host string, targets []string) Factory {
-	kvstoreHTTPMetrics = &KVStoreHTTPCombinedMetrics{
-		Interactions: newKVStoreHTTPMetrics("interactions", "interactions", host),
-		Requests: map[string]*KVStoreHTTPMetrics{
-			"broadcast_tx_sync": newKVStoreHTTPMetrics("broadcast_tx_sync", "broadcast_tx_sync requests", host),
-			"abci_query":        newKVStoreHTTPMetrics("abci_query", "abci_query requests", host),
-		},
+// NewKVStoreHTTPFactoryProducer creates a new KVStoreHTTPFactoryProducer
+// instance ready to produce client factories.
+func NewKVStoreHTTPFactoryProducer() *KVStoreHTTPFactoryProducer {
+	return &KVStoreHTTPFactoryProducer{
+		logger: logging.NewLogrusLogger(""),
 	}
+}
+
+// New instantiates a KVStoreHTTPFactory with the given parameters.
+func (p *KVStoreHTTPFactoryProducer) New(cfg Config, id string, targets []string) Factory {
+	p.logger.Debug("Creating Prometheus metrics", "factoryID", id)
 	return &KVStoreHTTPFactory{
-		cfg:     cfg,
-		targets: targets,
+		producer: p,
+		cfg:      cfg,
+		id:       id,
+		targets:  targets,
+		metrics: &KVStoreHTTPCombinedMetrics{
+			Interactions: newKVStoreHTTPMetrics("interactions", "interactions", id),
+			Requests: map[string]*KVStoreHTTPMetrics{
+				"broadcast_tx_sync": newKVStoreHTTPMetrics("broadcast_tx_sync", "broadcast_tx_sync requests", id),
+				"abci_query":        newKVStoreHTTPMetrics("abci_query", "abci_query requests", id),
+			},
+		},
 	}
 }
 
@@ -137,25 +148,25 @@ func (c *KVStoreHTTPClient) randomTarget() *client.HTTP {
 
 func (c *KVStoreHTTPClient) measureInteraction(fn func() error) {
 	timeTaken, err := TimeFn(fn)
-	kvstoreHTTPMetrics.Interactions.ResponseTimes.Observe(timeTaken.Seconds())
+	c.factory.metrics.Interactions.ResponseTimes.Observe(timeTaken.Seconds())
 
 	if err != nil {
-		kvstoreHTTPMetrics.Interactions.Failures.Inc()
+		c.factory.metrics.Interactions.Failures.Inc()
 	}
 	// we always increment the number of interactions
-	kvstoreHTTPMetrics.Interactions.Count.Inc()
+	c.factory.metrics.Interactions.Count.Inc()
 }
 
 func (c *KVStoreHTTPClient) measureRequest(reqID string, fn func() error) error {
 	startTime := time.Now()
 	err := fn()
 	timeTaken := time.Since(startTime)
-	kvstoreHTTPMetrics.Requests[reqID].ResponseTimes.Observe(timeTaken.Seconds())
+	c.factory.metrics.Requests[reqID].ResponseTimes.Observe(timeTaken.Seconds())
 
 	if err != nil {
-		kvstoreHTTPMetrics.Requests[reqID].Failures.Inc()
+		c.factory.metrics.Requests[reqID].Failures.Inc()
 	}
-	kvstoreHTTPMetrics.Requests[reqID].Count.Inc()
+	c.factory.metrics.Requests[reqID].Count.Inc()
 
 	return err
 }

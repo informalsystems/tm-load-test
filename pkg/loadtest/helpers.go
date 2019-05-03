@@ -21,12 +21,12 @@ func sanitizeHostID(id string) string {
 	return result
 }
 
-func getOrGenerateHostID(prefix string) string {
+func getOrGenerateHostID(suffix string) string {
 	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = prefix
+	if err == nil {
+		hostname = hostname + "_"
 	}
-	return sanitizeHostID(hostname)
+	return sanitizeHostID(hostname + suffix)
 }
 
 // resolveBindAddr will take the given address, attempt to listen on it, and

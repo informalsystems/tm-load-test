@@ -1,7 +1,6 @@
 package loadtest
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -20,10 +19,6 @@ import (
 // to start.
 const DefaultSlaveLongPollTimeout = 30 * time.Second
 
-// DefaultSlaveUpdateInterval is the frequency at which the slave sends updates
-// to the master as to the progress of the load testing.
-const DefaultSlaveUpdateInterval = 10 * time.Second
-
 // DefaultSlaveUpdateTimeout indicates the timeout when sending interim updates
 // to the master.
 const DefaultSlaveUpdateTimeout = 3 * time.Second
@@ -32,31 +27,14 @@ const DefaultSlaveUpdateTimeout = 3 * time.Second
 // it's sent the kill signal to its clients for all of them to shut down.
 const DefaultSlaveClientsKillMaxWait = 30 * time.Second
 
-// DefaultSlaveMaxFailedUpdates specifies the maximum number of subsequent
-// updates to the master that can fail before considering the master to be down.
-const DefaultSlaveMaxFailedUpdates = 3
-
 type slaveState string
 
 const (
-	slaveCreating slaveState = "creating"
-	slaveStarting slaveState = "starting"
 	slaveAccepted slaveState = "accepted"
 	slaveTesting  slaveState = "testing"
 	slaveFinished slaveState = "finished"
 	slaveFailed   slaveState = "failed"
 )
-
-// Encapsulates objects relevant to the slave's Prometheus server.
-type slavePrometheusServer struct {
-	logger logging.Logger
-	svr    *http.Server
-
-	wg sync.WaitGroup
-
-	mtx         sync.Mutex
-	flagStarted bool // Has the Prometheus server been started yet?
-}
 
 // Slave is an agent that facilitates load testing. It initially needs to
 // connect to a master node to register itself, and then when the master node
@@ -70,20 +48,20 @@ type Slave struct {
 	interactionsc     chan int64      // Receives an interaction count after each interaction to allow for counting of interactions and updating progress.
 	interactionsStopc chan struct{}   // Closed when we need to stop counting interactions.
 
-	prometheus *slavePrometheusServer
+	prometheus *baseServer
 
 	mtx             sync.Mutex
 	id              string
-	state           slaveState
-	failedUpdates   int  // To keep track of how many failed updates the slave's tried to send to the master, to know if the master's still there.
-	flagKill        bool // Set to true when the slave must be killed.
-	flagKillClients bool // Set to true when the clients must be killed (doesn't necessarily mean the slave must be killed).
+	flagKill        bool      // Set to true when the slave must be killed.
+	flagKillClients bool      // Set to true when the clients must be killed (doesn't necessarily mean the slave must be killed).
+	startTime       time.Time // When the testing was started.
+	interactions    int64     // A count of all of the interactions executed so far.
 }
 
 // NewSlave will instantiate a new slave node with the given configuration.
 func NewSlave(cfg *Config) (*Slave, error) {
 	slaveID := generateSlaveID()
-	logger := logging.NewLogrusLogger("slave" + slaveID)
+	logger := logging.NewLogrusLogger("slave-" + slaveID)
 	logger.Debug("Creating slave")
 	// We need to instantiate clientFactory before the Prometheus server
 	// otherwise the Prometheus metrics won't have been registered yet
@@ -92,37 +70,29 @@ func NewSlave(cfg *Config) (*Slave, error) {
 		getOrGenerateHostID(slaveID),
 		cfg.TestNetwork.GetTargetRPCURLs(),
 	)
-	prometheus, err := newSlavePrometheusServer(cfg.Slave.Bind, logger)
+	// instantiate the Prometheus metrics server
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	prometheus, err := newBaseServer(cfg.Slave.Bind, mux, logger)
 	if err != nil {
 		return nil, err
 	}
+
 	maxInteractions := int64(cfg.Clients.Spawn) * int64(cfg.Clients.MaxInteractions)
-	if maxInteractions == 0 {
-		return nil, fmt.Errorf("maximum number of interactions (clients.spawn * clients.max_interactions) is zero")
+	if maxInteractions <= 0 {
+		return nil, fmt.Errorf("maximum number of interactions (clients.spawn * clients.max_interactions) must be greater than zero")
 	}
+	logger.Debug("Slave stop criteria", "maxInteractions", maxInteractions)
 	return &Slave{
 		cfg:               cfg,
 		logger:            logger,
 		id:                slaveID,
-		state:             slaveCreating,
 		clientFactory:     clientFactory,
 		maxInteractions:   maxInteractions,
 		interactionsc:     make(chan int64, cfg.Clients.Spawn),
 		interactionsStopc: make(chan struct{}),
 		prometheus:        prometheus,
 	}, err
-}
-
-func (s *Slave) setState(state slaveState) {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-	s.state = state
-}
-
-func (s *Slave) getState() slaveState {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-	return s.state
 }
 
 func (s *Slave) getID() string {
@@ -157,53 +127,70 @@ func (s *Slave) setKillClients() {
 	s.flagKillClients = true
 }
 
-func (s *Slave) trackFailedUpdate() int {
+func (s *Slave) addInteractions(c int64) {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
-	s.failedUpdates++
-	return s.failedUpdates
+	s.interactions += c
 }
 
-func (s *Slave) resetFailedUpdates() {
+func (s *Slave) getInteractions() int64 {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
-	s.failedUpdates = 0
+	return s.interactions
+}
+
+func (s *Slave) trackTestStart() {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	s.startTime = time.Now()
+}
+
+func (s *Slave) getStartTime() time.Time {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	return s.startTime
 }
 
 // Runs the overall load testing operation, keeping track of the state as it
 // goes.
 func (s *Slave) run() error {
-	s.setState(slaveStarting)
 	if err := s.register(); err != nil {
-		s.setState(slaveFailed)
 		return err
 	}
-	s.setState(slaveAccepted)
 	if err := s.waitToStart(); err != nil {
-		s.setState(slaveFailed)
-		return err
+		return s.failAndUpdateStateWithMaster(err)
 	}
-	s.setState(slaveTesting)
 	if err := s.doLoadTest(); err != nil {
-		s.setState(slaveFailed)
-		return err
+		return s.failAndUpdateStateWithMaster(err)
 	}
-	s.setState(slaveFinished)
 	return nil
 }
 
+func (s *Slave) failAndUpdateStateWithMaster(err error) error {
+	if e := s.updateStateWithMaster(slaveFailed, err.Error()); e != nil {
+		s.logger.Error("Failed to send state update to master", "err", e)
+	}
+	// do a pass-through of the error
+	return err
+}
+
+// Does long polling to try to eventually convince the master to change the
+// state of this slave.
 func (s *Slave) updateStateWithMaster(state slaveState, status string) error {
+	rs := remoteSlave{
+		ID:           s.getID(),
+		State:        state,
+		Status:       status,
+		Interactions: s.getInteractions(),
+	}
 	// tell the master we want to set the state for this slave
-	msg, err := toJSON(reqCreateOrUpdateSlave{
-		State:  state,
-		Status: status,
-	})
+	msg, err := toJSON(&rs)
 	if err != nil {
 		return NewError(ErrSlaveFailed, err, "failed to marshal JSON message")
 	}
 
-	reqURL := fmt.Sprintf("%s/slave/%s", s.cfg.Slave.Master, s.getID())
-	s.logger.Debug("Long polling master", "url", reqURL)
+	reqURL := fmt.Sprintf("%s/slave", s.cfg.Slave.Master)
+	s.logger.Debug("Long polling master", "url", reqURL, "state", rs.State, "interactions", rs.Interactions)
 	req, err := http.NewRequest("POST", reqURL, strings.NewReader(msg))
 	if err != nil {
 		return NewError(ErrSlaveFailed, err, "failed to construct request")
@@ -218,6 +205,30 @@ func (s *Slave) updateStateWithMaster(state slaveState, status string) error {
 		s.logger,
 	)
 	return err
+}
+
+// Send an update to the master to tell it how far this slave is with its load
+// testing. Doesn't do any long polling.
+func (s *Slave) sendProgressToMaster() error {
+	interactionCount := s.getInteractions()
+	msg, err := toJSON(remoteSlave{ID: s.getID(), State: slaveTesting, Interactions: interactionCount})
+	if err != nil {
+		return fmt.Errorf("failed to marshal slave update message: %v", err)
+	}
+	reqURL := fmt.Sprintf("%s/slave", s.cfg.Slave.Master)
+	progress := fmt.Sprintf("%.1f%%", float64(100)*(float64(interactionCount)/float64(s.maxInteractions)))
+	s.logger.Info("Sending progress update to master", "url", reqURL, "count", interactionCount, "progress", progress)
+
+	client := &http.Client{
+		Timeout: DefaultSlaveUpdateTimeout,
+	}
+	res, err := client.Post(reqURL, "application/json", strings.NewReader(msg))
+	if err != nil {
+		return fmt.Errorf("failed to POST slave update message: %v", err)
+	} else if res.StatusCode != 200 {
+		return fmt.Errorf("got unexpected status code from master: %d", res.StatusCode)
+	}
+	return nil
 }
 
 // Keeps trying to register with the master until it succeeds or times out.
@@ -241,7 +252,7 @@ func (s *Slave) doLoadTest() error {
 	go s.countInteractions()
 	defer close(s.interactionsStopc)
 
-	startTime := time.Now()
+	s.trackTestStart()
 	var wg sync.WaitGroup
 	// spawn all of our clients in batches
 	for totalSpawned := int64(0); totalSpawned < s.maxInteractions; totalSpawned += int64(rate) {
@@ -260,7 +271,7 @@ func (s *Slave) doLoadTest() error {
 		}
 		time.Sleep(delay)
 	}
-	return s.waitForClientsToFinish(&wg, startTime, s.cfg.Clients.MaxTestTime.Duration())
+	return s.waitForClientsToFinish(&wg, s.getStartTime(), s.cfg.Clients.MaxTestTime.Duration())
 }
 
 func (s *Slave) spawnClientBatch(count int64, wg *sync.WaitGroup) {
@@ -312,6 +323,7 @@ func (s *Slave) killClientsAndWait(wg *sync.WaitGroup, donec chan struct{}) {
 	}
 }
 
+// Spawns a single client and executes all of its interactions.
 func (s *Slave) spawnClient(wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
@@ -328,69 +340,46 @@ func (s *Slave) spawnClient(wg *sync.WaitGroup) {
 	}()
 }
 
-// Send an update to the master to tell it how far this slave is with its load
-// testing.
-func (s *Slave) sendProgressToMaster(interactionCount int64) error {
-	msg, err := toJSON(reqUpdateSlaveInteractions{Count: interactionCount})
-	if err != nil {
-		return fmt.Errorf("failed to marshal slave update message: %v", err)
-	}
-	reqURL := fmt.Sprintf("%s/slave/%s/interactions", s.cfg.Slave.Master, s.getID())
-
-	progress := fmt.Sprintf("%.1f", float64(100)*(float64(interactionCount)/float64(s.maxInteractions)))
-	s.logger.Info("Sending progress update to master", "url", reqURL, "count", interactionCount, "progress", progress)
-	client := &http.Client{
-		Timeout: DefaultSlaveUpdateTimeout,
-	}
-	res, err := client.Post(reqURL, "application/json", strings.NewReader(msg))
-	if err != nil {
-		return fmt.Errorf("failed to POST slave update message: %v", err)
-	} else if res.StatusCode != 200 {
-		return fmt.Errorf("got unexpected status code from master: %d", res.StatusCode)
-	}
-	return nil
-}
-
 func (s *Slave) countInteractions() {
-	interactions := int64(0)
-	updateTicker := time.NewTicker(DefaultSlaveUpdateInterval)
+	updateTicker := time.NewTicker(DefaultHealthCheckInterval)
+	defer updateTicker.Stop()
 loop:
 	for {
 		select {
 		case <-updateTicker.C:
-			s.sendProgressToMasterAndTrack(interactions)
+			s.sendProgressToMasterAndTrack()
 
 		case c := <-s.interactionsc:
-			interactions += c
+			s.addInteractions(c)
 
 		case <-s.interactionsStopc:
 			break loop
 		}
 	}
-	updateTicker.Stop()
-	// send one final update to the master
-	s.sendProgressToMasterAndTrack(interactions)
 }
 
-func (s *Slave) sendProgressToMasterAndTrack(interactions int64) {
-	if err := s.sendProgressToMaster(interactions); err != nil {
+func (s *Slave) sendProgressToMasterAndTrack() {
+	if err := s.sendProgressToMaster(); err != nil {
 		s.logger.Error("Failed to send progress update to master", "err", err)
 		s.Kill()
 	}
 }
 
 // Run executes the slave's entire process in the current goroutine.
-func (s *Slave) Run() error {
+func (s *Slave) Run() (*Summary, error) {
 	defer s.shutdown()
 	if err := s.prometheus.start(); err != nil {
-		s.updateStateWithMaster(slaveFailed, err.Error())
-		return err
+		s.updateStateWithMaster(slaveFailed, err.Error()) // nolint: errcheck
+		return nil, err
 	}
 	if err := s.run(); err != nil {
-		s.updateStateWithMaster(slaveFailed, err.Error())
-		return err
+		s.updateStateWithMaster(slaveFailed, err.Error()) // nolint: errcheck
+		return nil, err
 	}
-	return nil
+	return &Summary{
+		Interactions:  s.getInteractions(),
+		TotalTestTime: time.Since(s.getStartTime()),
+	}, nil
 }
 
 // Kill will attempt to kill the slave (gracefully). This executes
@@ -412,73 +401,4 @@ func (s *Slave) shutdown() {
 
 func generateSlaveID() string {
 	return cmn.RandStr(8)
-}
-
-//-----------------------------------------------------------------------------
-
-func newSlavePrometheusServer(addr string, logger logging.Logger) (*slavePrometheusServer, error) {
-	resolvedAddr, err := resolveBindAddr(addr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve Prometheus bind address (%s): %v", addr, err)
-	}
-	logger.Info("Starting Prometheus server", "addr", resolvedAddr)
-
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.Handler())
-	return &slavePrometheusServer{
-		logger: logger,
-		svr: &http.Server{
-			Addr:    resolvedAddr,
-			Handler: mux,
-		},
-	}, nil
-}
-
-func (s *slavePrometheusServer) start() error {
-	errc := make(chan error)
-	s.wg.Add(1)
-	go func() {
-		if err := s.svr.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			s.logger.Error("Prometheus server failed", "err", err)
-			errc <- err
-		} else {
-			s.logger.Info("Successfully shut down Prometheus server")
-		}
-		s.wg.Done()
-	}()
-
-	// wait for the server to start
-	select {
-	// if this fails, it would fail almost instantly
-	case err := <-errc:
-		return err
-
-	// it should be up by now
-	case <-time.After(100 * time.Millisecond):
-	}
-	s.setStarted()
-	s.logger.Info("Successfully started Prometheus server", "addr", s.svr.Addr)
-	return nil
-}
-
-func (s *slavePrometheusServer) shutdown() error {
-	if !s.hasStarted() {
-		return nil
-	}
-	defer s.wg.Wait()
-	return s.svr.Shutdown(context.Background())
-}
-
-// TODO: Do we need a mutex here?
-func (s *slavePrometheusServer) setStarted() {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-	s.flagStarted = true
-}
-
-// TODO: Do we need a mutex here?
-func (s *slavePrometheusServer) hasStarted() bool {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-	return s.flagStarted
 }

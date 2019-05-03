@@ -18,7 +18,8 @@ const DefaultHealthCheckInterval = 10 * time.Second
 // DefaultMaxMissedHealthChecks is the number of health checks that a slave can
 // miss before being considered as "failed" (i.e. one more missed health check
 // than `DefaultMaxMissedHealthChecks` will result in total load testing
-// failure).
+// failure). Also applies to the slaves' attempts to reach the master before
+// they consider the master to be down.
 const DefaultMaxMissedHealthChecks = 2
 
 // DefaultMaxMissedHealthCheckPeriod is the time after which a slave is
