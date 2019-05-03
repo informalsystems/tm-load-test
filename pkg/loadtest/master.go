@@ -19,12 +19,13 @@ type Master struct {
 
 	svr *baseServer
 
-	mtx         sync.Mutex
-	summary     *Summary
-	startTime   time.Time
-	slaves      map[string]*remoteSlave
-	flagKill    bool
-	shutdownErr error
+	mtx                  sync.Mutex
+	summary              *Summary
+	startTime            time.Time
+	slaves               map[string]*remoteSlave
+	flagKill             bool
+	shutdownErr          error
+	expectedInteractions int64
 
 	// For tracking HTTP long polling requests that're waiting for the go-ahead
 	// to start testing.
@@ -46,12 +47,16 @@ var _ error = (*stillWaitingForSlaves)(nil)
 func NewMaster(cfg *Config) (*Master, error) {
 	logger := logging.NewLogrusLogger("master")
 	m := &Master{
-		cfg:              cfg,
-		logger:           logger,
-		summary:          &Summary{},
-		slaves:           make(map[string]*remoteSlave),
-		readySubscribers: make(map[int]chan bool),
-		slavec:           make(chan slaveRequest, cfg.Master.ExpectSlaves),
+		cfg:                  cfg,
+		logger:               logger,
+		summary:              &Summary{},
+		slaves:               make(map[string]*remoteSlave),
+		expectedInteractions: int64(cfg.Master.ExpectSlaves) * int64(cfg.Clients.Spawn) * int64(cfg.Clients.MaxInteractions),
+		readySubscribers:     make(map[int]chan bool),
+		slavec:               make(chan slaveRequest, cfg.Master.ExpectSlaves),
+	}
+	if m.expectedInteractions <= 0 {
+		return nil, NewError(ErrInvalidConfig, nil, "total expected interactions must be greater than 0")
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
@@ -63,6 +68,7 @@ func NewMaster(cfg *Config) (*Master, error) {
 	m.svr = svr
 	// set the random seed for generating readiness subscriber IDs
 	rand.Seed(time.Now().UnixNano())
+	m.logger.Debug("Created master", "expectedInteractions", m.expectedInteractions)
 	return m, nil
 }
 
@@ -80,6 +86,15 @@ func (m *Master) Run() (*Summary, error) {
 
 	if err := m.doLoadTest(); err != nil {
 		m.fail(err) // nolint: errcheck
+	}
+
+	if m.getShutdownErr() == nil && m.cfg.Master.WaitAfterFinished > 0 {
+		m.logger.Info(
+			"Waiting predefined time period after completion of testing",
+			"duration",
+			m.cfg.Master.WaitAfterFinished.Duration().String(),
+		)
+		time.Sleep(m.cfg.Master.WaitAfterFinished.Duration())
 	}
 
 	return m.getSummary(), m.getShutdownErr()
@@ -129,6 +144,8 @@ func (m *Master) waitForSlaves() error {
 func (m *Master) doLoadTest() error {
 	killCheckTicker := time.NewTicker(100 * time.Millisecond)
 	defer killCheckTicker.Stop()
+	progressTicker := time.NewTicker(5 * time.Second)
+	defer progressTicker.Stop()
 	for {
 		select {
 		case msg := <-m.slavec:
@@ -145,18 +162,37 @@ func (m *Master) doLoadTest() error {
 			if m.killed() {
 				return NewError(ErrMasterFailed, nil, "master killed")
 			}
+
+		case <-progressTicker.C:
+			interactions := m.countInteractions()
+			progress := float64(100) * float64(interactions) / float64(m.getExpectedInteractions())
+			m.logger.Info(
+				"Load testing progress",
+				"interactions", interactions,
+				"progress", fmt.Sprintf("%.1f%%", progress),
+			)
 		}
 	}
 }
 
-func (m *Master) computeFinalStats() {
+func (m *Master) countInteractions() int64 {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
 
-	m.summary.Interactions = 0
+	var count int64
 	for _, slave := range m.slaves {
-		m.summary.Interactions += slave.Interactions
+		count += slave.Interactions
 	}
+	return count
+}
+
+func (m *Master) computeFinalStats() {
+	interactions := m.countInteractions()
+
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+
+	m.summary.Interactions = interactions
 	m.summary.TotalTestTime = time.Since(m.startTime)
 }
 
@@ -294,6 +330,12 @@ func (m *Master) getSummary() *Summary {
 	defer m.mtx.Unlock()
 	summaryCopy := *m.summary
 	return &summaryCopy
+}
+
+func (m *Master) getExpectedInteractions() int64 {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	return m.expectedInteractions
 }
 
 func (m *Master) handleSlaveRequest(w http.ResponseWriter, r *http.Request) {

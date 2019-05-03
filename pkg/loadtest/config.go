@@ -37,9 +37,10 @@ type Config struct {
 
 // MasterConfig provides the configuration for the load testing master.
 type MasterConfig struct {
-	Bind               string                      `toml:"bind"`                 // The address to which to bind the master (host:port).
-	ExpectSlaves       int                         `toml:"expect_slaves"`        // The number of slaves to expect to connect before starting the load test.
-	ExpectSlavesWithin timeutils.ParseableDuration `toml:"expect_slaves_within"` // The time period within which to expect to hear from all slaves, otherwise causes a failure.
+	Bind               string                      `toml:"bind"`                          // The address to which to bind the master (host:port).
+	ExpectSlaves       int                         `toml:"expect_slaves"`                 // The number of slaves to expect to connect before starting the load test.
+	ExpectSlavesWithin timeutils.ParseableDuration `toml:"expect_slaves_within"`          // The time period within which to expect to hear from all slaves, otherwise causes a failure.
+	WaitAfterFinished  timeutils.ParseableDuration `toml:"wait_after_finished,omitempty"` // A time period to wait after successful completion of the load testing before completely shutting the master down.
 }
 
 // SlaveConfig provides configuration specific to the load testing slaves.
