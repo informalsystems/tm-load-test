@@ -13,7 +13,7 @@ import (
 
 // DefaultHealthCheckInterval is the interval at which slave nodes are expected
 // to send a `LoadTestUnderway` message after starting their load testing.
-const DefaultHealthCheckInterval = 10 * time.Second
+const DefaultHealthCheckInterval = 2 * time.Second
 
 // DefaultMaxMissedHealthChecks is the number of health checks that a slave can
 // miss before being considered as "failed" (i.e. one more missed health check
