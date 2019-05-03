@@ -267,7 +267,7 @@ func (s *Slave) doLoadTest() error {
 		// be killed here
 		if s.mustKill() {
 			s.killClientsAndWait(&wg, nil)
-			return s.updateStateWithMaster(slaveFailed, "Slave killed")
+			return s.failAndUpdateStateWithMaster(fmt.Errorf("slave killed"))
 		}
 		time.Sleep(delay)
 	}
