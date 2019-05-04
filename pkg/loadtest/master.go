@@ -189,7 +189,7 @@ func (m *Master) logProgress() {
 		"interactions", interactions,
 		"progress", fmt.Sprintf("%.1f%%", progress),
 		"interactionsPerSec", fmt.Sprintf("%.1f", ips),
-		"timeLeft", timeLeft.String(),
+		"estTimeLeft", timeLeft.String(),
 	)
 }
 
