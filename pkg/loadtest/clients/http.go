@@ -8,9 +8,9 @@ import (
 
 	"github.com/interchainio/tm-load-test/internal/logging"
 	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/tendermint/tendermint/rpc/client"
+	ctypes "github.com/tendermint/tendermint/rpc/core/types"
 )
 
 // KVStoreHTTPFactoryProducer instantiates our KVStoreHTTPFactory instance for
@@ -43,6 +43,7 @@ type KVStoreHTTPClient struct {
 type KVStoreHTTPMetrics struct {
 	Count         prometheus.Counter
 	Failures      prometheus.Counter
+	Errors        *prometheus.CounterVec
 	ResponseTimes prometheus.Histogram
 }
 
@@ -76,6 +77,13 @@ func newKVStoreHTTPMetrics(kind, desc, host string) *KVStoreHTTPMetrics {
 				Name: fmt.Sprintf("loadtest_kvstorehttp_%s_%s_failures_total", kind, host),
 				Help: fmt.Sprintf("Number of %s failures with the kvstore app via the HTTP RPC during load testing", desc),
 			},
+		),
+		Errors: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: fmt.Sprintf("loadtest_kvstorehttp_%s_%s_errors_total", kind, host),
+				Help: fmt.Sprintf("Error counts for different kinds of failures for %s", desc),
+			},
+			[]string{"Error"},
 		),
 		ResponseTimes: promauto.NewHistogram(
 			prometheus.HistogramOpts{
@@ -152,6 +160,7 @@ func (c *KVStoreHTTPClient) measureInteraction(fn func() error) {
 
 	if err != nil {
 		c.factory.metrics.Interactions.Failures.Inc()
+		c.factory.metrics.Interactions.Errors.WithLabelValues(err.Error()).Inc()
 	}
 	// we always increment the number of interactions
 	c.factory.metrics.Interactions.Count.Inc()
@@ -165,6 +174,7 @@ func (c *KVStoreHTTPClient) measureRequest(reqID string, fn func() error) error 
 
 	if err != nil {
 		c.factory.metrics.Requests[reqID].Failures.Inc()
+		c.factory.metrics.Requests[reqID].Errors.WithLabelValues(err.Error()).Inc()
 	}
 	c.factory.metrics.Requests[reqID].Count.Inc()
 
@@ -185,11 +195,13 @@ func (c *KVStoreHTTPClient) Interact() {
 			return err
 		}
 
+		var qres *ctypes.ResultABCIQuery
 		RandomSleep(c.factory.cfg.RequestWaitMin.Duration(), c.factory.cfg.RequestWaitMax.Duration())
-		return c.measureRequest("abci_query", func() error {
-			qres, err := c.randomTarget().ABCIQuery("/key", k)
-			if err != nil {
-				return err
+		err = c.measureRequest("abci_query", func() error {
+			var e error
+			qres, e = c.randomTarget().ABCIQuery("/key", k)
+			if e != nil {
+				return e
 			}
 			if qres.Response.IsErr() {
 				return fmt.Errorf("Failed to execute ABCIQuery: %s", qres.Response.String())
@@ -197,10 +209,15 @@ func (c *KVStoreHTTPClient) Interact() {
 			if len(qres.Response.Value) == 0 {
 				return fmt.Errorf("Key/value pair could not be found")
 			}
-			if !bytes.Equal(v, qres.Response.Value) {
-				return fmt.Errorf("Retrieved value does not match stored value")
-			}
 			return nil
 		})
+		if err != nil {
+			return err
+		}
+
+		if !bytes.Equal(v, qres.Response.Value) {
+			return fmt.Errorf("Retrieved value does not match stored value")
+		}
+		return nil
 	})
 }
