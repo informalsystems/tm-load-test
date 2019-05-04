@@ -1,9 +1,10 @@
 GOPATH ?= $(shell go env GOPATH)
 OUTPUT ?= build/tm-load-test
+MAIN ?= cmd/tm-load-test/main.go
 .PHONY: build test lint
 
 build:
-	GO111MODULE=on go build -o $(OUTPUT) cmd/tm-load-test/main.go
+	GO111MODULE=on go build -o $(OUTPUT) $(MAIN)
 
 test:
 	GO111MODULE=on go test -cover -race ./...
