@@ -13,9 +13,9 @@ import (
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
 )
 
-// KVStoreHTTPFactoryProducer instantiates our KVStoreHTTPFactory instance for
-// use from within a slave.
-type KVStoreHTTPFactoryProducer struct {
+// KVStoreHTTPClientType instantiates our KVStoreHTTPFactory instance for use
+// from within a slave.
+type KVStoreHTTPClientType struct {
 	logger logging.Logger
 }
 
@@ -23,11 +23,10 @@ type KVStoreHTTPFactoryProducer struct {
 // Tendermint nodes running the `kvstore` ABCI application (via the HTTP RPC
 // endpoints).
 type KVStoreHTTPFactory struct {
-	producer *KVStoreHTTPFactoryProducer
-	cfg      Config
-	id       string // A unique identifier for this factory.
-	targets  []string
-	metrics  *KVStoreHTTPCombinedMetrics // Metrics for this factory's clients.
+	cfg     Config
+	id      string // A unique identifier for this factory.
+	targets []string
+	metrics *KVStoreHTTPCombinedMetrics // Metrics for this factory's clients.
 }
 
 // KVStoreHTTPClient is a load testing client that interacts with multiple
@@ -55,13 +54,8 @@ type KVStoreHTTPCombinedMetrics struct {
 	Requests map[string]*KVStoreHTTPMetrics
 }
 
-// KVStoreHTTPFactoryProducer implements FactoryProducer.
-var _ FactoryProducer = (*KVStoreHTTPFactoryProducer)(nil)
-
-// KVStoreHTTPFactory implements Factory.
+var _ ClientType = (*KVStoreHTTPClientType)(nil)
 var _ Factory = (*KVStoreHTTPFactory)(nil)
-
-// KVStoreHTTPClient implements Client.
 var _ Client = (*KVStoreHTTPClient)(nil)
 
 func newKVStoreHTTPMetrics(kind, desc, host string) *KVStoreHTTPMetrics {
@@ -95,25 +89,24 @@ func newKVStoreHTTPMetrics(kind, desc, host string) *KVStoreHTTPMetrics {
 }
 
 // ----------------------------------------------------------------------------
-// KVStoreHTTPFactoryProducer
+// KVStoreHTTPClientType
 //
 
-// NewKVStoreHTTPFactoryProducer creates a new KVStoreHTTPFactoryProducer
-// instance ready to produce client factories.
-func NewKVStoreHTTPFactoryProducer() *KVStoreHTTPFactoryProducer {
-	return &KVStoreHTTPFactoryProducer{
+// NewKVStoreHTTPClientType creates a new KVStoreHTTPClientType instance ready
+// to produce client factories.
+func NewKVStoreHTTPClientType() *KVStoreHTTPClientType {
+	return &KVStoreHTTPClientType{
 		logger: logging.NewLogrusLogger(""),
 	}
 }
 
-// New instantiates a KVStoreHTTPFactory with the given parameters.
-func (p *KVStoreHTTPFactoryProducer) New(cfg Config, id string, targets []string) Factory {
-	p.logger.Debug("Creating Prometheus metrics", "factoryID", id)
+// NewFactory instantiates a KVStoreHTTPFactory with the given parameters.
+func (ct *KVStoreHTTPClientType) NewFactory(cfg Config, id string, targets []string) Factory {
+	ct.logger.Debug("Creating Prometheus metrics", "factoryID", id)
 	return &KVStoreHTTPFactory{
-		producer: p,
-		cfg:      cfg,
-		id:       id,
-		targets:  targets,
+		cfg:     cfg,
+		id:      id,
+		targets: targets,
 		metrics: &KVStoreHTTPCombinedMetrics{
 			Interactions: newKVStoreHTTPMetrics("interactions", "interactions", id),
 			Requests: map[string]*KVStoreHTTPMetrics{
@@ -128,9 +121,9 @@ func (p *KVStoreHTTPFactoryProducer) New(cfg Config, id string, targets []string
 // KVStoreHTTPFactory
 //
 
-// New instantiates a new client for interaction with a Tendermint
+// NewClient instantiates a new client for interaction with a Tendermint
 // network.
-func (f *KVStoreHTTPFactory) New() Client {
+func (f *KVStoreHTTPFactory) NewClient() Client {
 	return NewKVStoreHTTPClient(f)
 }
 

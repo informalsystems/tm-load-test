@@ -65,7 +65,7 @@ func NewSlave(cfg *Config) (*Slave, error) {
 	logger.Debug("Creating slave")
 	// We need to instantiate clientFactory before the Prometheus server
 	// otherwise the Prometheus metrics won't have been registered yet
-	clientFactory := clients.GetFactoryProducer(cfg.Clients.Type).New(
+	clientFactory := clients.GetClientType(cfg.Clients.Type).NewFactory(
 		cfg.Clients,
 		getOrGenerateHostID(slaveID),
 		cfg.TestNetwork.GetTargetRPCURLs(),
@@ -327,7 +327,7 @@ func (s *Slave) killClientsAndWait(wg *sync.WaitGroup, donec chan struct{}) {
 func (s *Slave) spawnClient(wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
-		c := s.clientFactory.New()
+		c := s.clientFactory.NewClient()
 	interactionLoop:
 		for i := 0; i < s.cfg.Clients.MaxInteractions; i++ {
 			c.Interact()

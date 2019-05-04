@@ -25,8 +25,8 @@ type Config struct {
 
 // Validate makes sure the client configuration makes sense.
 func (c *Config) Validate() error {
-	if cfp := GetFactoryProducer(c.Type); cfp == nil {
-		return fmt.Errorf("client type is unrecognized (supported: %s)", strings.Join(GetSupportedFactoryProducerIDs(), ","))
+	if ct := GetClientType(c.Type); ct == nil {
+		return fmt.Errorf("client type is unrecognized (supported: %s)", strings.Join(GetSupportedClientTypes(), ","))
 	}
 	if c.Spawn < 1 {
 		return fmt.Errorf("client spawn count must be greater than 0")

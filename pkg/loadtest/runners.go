@@ -15,7 +15,7 @@ import (
 
 // Here we register all of the built-in producers.
 func init() {
-	clients.RegisterFactoryProducer("kvstore-http", clients.NewKVStoreHTTPFactoryProducer())
+	clients.RegisterClientType("kvstore-http", clients.NewKVStoreHTTPClientType())
 }
 
 // Run must be executed from your `main` function in your Go code. This can be

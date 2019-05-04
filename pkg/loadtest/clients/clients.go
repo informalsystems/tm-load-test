@@ -5,15 +5,15 @@ import (
 	"strings"
 )
 
-// FactoryProducer produces client factories.
-type FactoryProducer interface {
+// ClientType produces client factories.
+type ClientType interface {
 	// New must take the given parameters and construct a Factory.
-	New(cfg Config, host string, targets []string) Factory
+	NewFactory(cfg Config, host string, targets []string) Factory
 }
 
 // Factory produces clients.
 type Factory interface {
-	New() Client
+	NewClient() Client
 }
 
 // Client instances are responsible for performing interactions with Tendermint
@@ -26,30 +26,30 @@ type Client interface {
 	Interact()
 }
 
-var fpRegistry = make(map[string]FactoryProducer)
+var clientTypeRegistry = make(map[string]ClientType)
 
-// RegisterFactoryProducer allows us to register a particular kind of client
-// factory with a unique ID to make it available to the load testing
-// infrastructure via the configuration file.
-func RegisterFactoryProducer(id string, producer FactoryProducer) {
-	fpRegistry[id] = producer
+// RegisterClientType allows us to register a particular kind of client factory
+// with a unique ID to make it available to the load testing infrastructure via
+// the configuration file. Not thread-safe.
+func RegisterClientType(id string, ct ClientType) {
+	clientTypeRegistry[id] = ct
 }
 
-// GetFactoryProducer will attempt to look up the client factory with the given
-// ID. If it exists, it will be returned. If not, nil will be returned.
-func GetFactoryProducer(id string) FactoryProducer {
-	producer, ok := fpRegistry[id]
+// GetClientType will attempt to look up the client factory with the given ID.
+// If it exists, it will be returned. If not, nil will be returned. Not
+// thread-safe.
+func GetClientType(id string) ClientType {
+	ct, ok := clientTypeRegistry[id]
 	if !ok {
 		return nil
 	}
-	return producer
+	return ct
 }
 
-// GetSupportedFactoryProducerIDs returns a list of supported client
-// factory producer IDs.
-func GetSupportedFactoryProducerIDs() []string {
+// GetSupportedClientTypes returns a list of supported client types.
+func GetSupportedClientTypes() []string {
 	ids := make([]string, 0)
-	for id := range fpRegistry {
+	for id := range clientTypeRegistry {
 		ids = append(ids, id)
 	}
 	sort.SliceStable(ids[:], func(i, j int) bool {
