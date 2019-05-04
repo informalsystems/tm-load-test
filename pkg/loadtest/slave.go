@@ -95,6 +95,31 @@ func NewSlave(cfg *Config) (*Slave, error) {
 	}, err
 }
 
+// Run executes the slave's entire process in the current goroutine.
+func (s *Slave) Run() (*Summary, error) {
+	defer s.shutdown()
+	if err := s.prometheus.start(); err != nil {
+		s.updateStateWithMaster(slaveFailed, err.Error()) // nolint: errcheck
+		return nil, err
+	}
+	if err := s.run(); err != nil {
+		s.updateStateWithMaster(slaveFailed, err.Error()) // nolint: errcheck
+		return nil, err
+	}
+	return &Summary{
+		Interactions:  s.getInteractions(),
+		TotalTestTime: time.Since(s.getStartTime()),
+	}, nil
+}
+
+// Kill will attempt to kill the slave (gracefully). This executes
+// asynchronously and returns immediately. The Run method will only conclude
+// once the shutdown is complete.
+func (s *Slave) Kill() {
+	s.logger.Info("Killing slave...")
+	s.setKill()
+}
+
 func (s *Slave) getID() string {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
@@ -164,7 +189,7 @@ func (s *Slave) run() error {
 		return s.failAndUpdateStateWithMaster(err)
 	}
 
-	if s.cfg.Slave.WaitAfterFinished > 0 {
+	if !s.mustKill() && s.cfg.Slave.WaitAfterFinished > 0 {
 		s.logger.Info(
 			"Waiting predefined time period after completion of testing",
 			"duration",
@@ -220,15 +245,13 @@ func (s *Slave) updateStateWithMaster(state slaveState, status string) error {
 // Send an update to the master to tell it how far this slave is with its load
 // testing. Doesn't do any long polling.
 func (s *Slave) sendProgressToMaster() error {
+	s.logProgress()
 	interactionCount := s.getInteractions()
 	msg, err := toJSON(remoteSlave{ID: s.getID(), State: slaveTesting, Interactions: interactionCount})
 	if err != nil {
 		return fmt.Errorf("failed to marshal slave update message: %v", err)
 	}
 	reqURL := fmt.Sprintf("%s/slave", s.cfg.Slave.Master)
-	progress := fmt.Sprintf("%.1f%%", float64(100)*(float64(interactionCount)/float64(s.maxInteractions)))
-	s.logger.Info("Sending progress update to master", "url", reqURL, "count", interactionCount, "progress", progress)
-
 	client := &http.Client{
 		Timeout: DefaultSlaveUpdateTimeout,
 	}
@@ -239,6 +262,42 @@ func (s *Slave) sendProgressToMaster() error {
 		return fmt.Errorf("got unexpected status code from master: %d", res.StatusCode)
 	}
 	return nil
+}
+
+func (s *Slave) logProgress() {
+	interactions := s.getInteractions()
+	expectedInteractions := float64(s.getMaxInteractions())
+	progress := float64(100) * float64(interactions) / expectedInteractions
+	totalSeconds := s.timeSinceStart().Seconds()
+	ips := float64(0)
+	if totalSeconds > 0 {
+		ips = float64(interactions) / totalSeconds
+	}
+	// extrapolate to try to find how long left for the test
+	expectedTotalSeconds := float64(0)
+	if ips > 0 {
+		expectedTotalSeconds = expectedInteractions / ips
+	}
+	timeLeft := time.Duration(int64(expectedTotalSeconds-totalSeconds)*1000) * time.Millisecond
+	s.logger.Info(
+		"Slave progress",
+		"interactions", interactions,
+		"progress", fmt.Sprintf("%.1f%%", progress),
+		"interactionsPerSec", fmt.Sprintf("%.1f", ips),
+		"estTimeLeft", timeLeft.String(),
+	)
+}
+
+func (s *Slave) getMaxInteractions() int64 {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	return s.maxInteractions
+}
+
+func (s *Slave) timeSinceStart() time.Duration {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	return time.Since(s.startTime)
 }
 
 // Keeps trying to register with the master until it succeeds or times out.
@@ -377,37 +436,10 @@ func (s *Slave) sendProgressToMasterAndTrack() {
 	}
 }
 
-// Run executes the slave's entire process in the current goroutine.
-func (s *Slave) Run() (*Summary, error) {
-	defer s.shutdown()
-	if err := s.prometheus.start(); err != nil {
-		s.updateStateWithMaster(slaveFailed, err.Error()) // nolint: errcheck
-		return nil, err
-	}
-	if err := s.run(); err != nil {
-		s.updateStateWithMaster(slaveFailed, err.Error()) // nolint: errcheck
-		return nil, err
-	}
-	return &Summary{
-		Interactions:  s.getInteractions(),
-		TotalTestTime: time.Since(s.getStartTime()),
-	}, nil
-}
-
-// Kill will attempt to kill the slave (gracefully). This executes
-// asynchronously and returns immediately. The Run method will only conclude
-// once the shutdown is complete.
-func (s *Slave) Kill() {
-	s.logger.Info("Killing slave...")
-	s.setKill()
-}
-
 func (s *Slave) shutdown() {
 	s.logger.Info("Shutting down")
 	if err := s.prometheus.shutdown(); err != nil {
 		s.logger.Error("Failed to shut down Prometheus server", "err", err)
-	} else {
-		s.logger.Info("Bye!")
 	}
 }
 
