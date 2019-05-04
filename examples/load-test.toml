@@ -12,7 +12,7 @@ expect_slaves_within = "1m"
 # A time period to wait after successful completion of the load testing before
 # completely shutting the master down. This is useful in case one wants to allow
 # for external polling of the Prometheus stats endpoint after successful
-# completion of testing.
+# completion of testing for a while.
 wait_after_finished = "10s"
 
 [slave]
@@ -33,6 +33,12 @@ expect_master_within = "1m"
 # master for a "GO!" message. After this period, the slave considers the whole
 # test a failure.
 expect_start_within = "1m"
+
+# A time period to wait after successful completion of the load testing before
+# completely shutting the slave down. This is useful in case one wants to allow
+# for external polling of the Prometheus stats endpoint after successful
+# completion of testing for a while.
+wait_after_finished = "10s"
 
 [test_network]
 

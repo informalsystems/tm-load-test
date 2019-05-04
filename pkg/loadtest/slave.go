@@ -163,6 +163,16 @@ func (s *Slave) run() error {
 	if err := s.doLoadTest(); err != nil {
 		return s.failAndUpdateStateWithMaster(err)
 	}
+
+	if s.cfg.Slave.WaitAfterFinished > 0 {
+		s.logger.Info(
+			"Waiting predefined time period after completion of testing",
+			"duration",
+			s.cfg.Slave.WaitAfterFinished.Duration().String(),
+		)
+		time.Sleep(s.cfg.Slave.WaitAfterFinished.Duration())
+	}
+
 	return nil
 }
 

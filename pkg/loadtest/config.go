@@ -49,6 +49,7 @@ type SlaveConfig struct {
 	Master             string                      `toml:"master"` // The master's external address (host:port).
 	ExpectMasterWithin timeutils.ParseableDuration `toml:"expect_master_within"`
 	ExpectStartWithin  timeutils.ParseableDuration `toml:"expect_start_within"`
+	WaitAfterFinished  timeutils.ParseableDuration `toml:"wait_after_finished,omitempty"` // A time period to wait after successful completion of the load testing before completely shutting the slave down.
 }
 
 // TestNetworkConfig encapsulates information about the network under test.
