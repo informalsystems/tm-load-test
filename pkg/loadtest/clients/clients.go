@@ -24,6 +24,14 @@ type Client interface {
 	// the assumption is that failures should be tracked internally by a client
 	// and exposed somehow through the Prometheus statistics.
 	Interact()
+
+	// OnStartup is an event that is called prior to the first interaction for
+	// this client.
+	OnStartup()
+
+	// OnShutdown is called once this client has finished all of its
+	// interactions.
+	OnShutdown()
 }
 
 var clientTypeRegistry = make(map[string]ClientType)

@@ -48,6 +48,8 @@ type KVStoreHTTPMetrics struct {
 
 // KVStoreHTTPCombinedMetrics encapsulates the metrics relevant to the load test.
 type KVStoreHTTPCombinedMetrics struct {
+	Clients prometheus.Gauge // The total number of clients running right now.
+
 	Interactions *KVStoreHTTPMetrics
 
 	// Request-related metrics
@@ -108,6 +110,12 @@ func (ct *KVStoreHTTPClientType) NewFactory(cfg Config, id string, targets []str
 		id:      id,
 		targets: targets,
 		metrics: &KVStoreHTTPCombinedMetrics{
+			Clients: promauto.NewGauge(
+				prometheus.GaugeOpts{
+					Name: fmt.Sprintf("loadtest_kvstorehttp_%s_clients", id),
+					Help: "Total number of clients spawned",
+				},
+			),
 			Interactions: newKVStoreHTTPMetrics("interactions", "interactions", id),
 			Requests: map[string]*KVStoreHTTPMetrics{
 				"broadcast_tx_sync": newKVStoreHTTPMetrics("broadcast_tx_sync", "broadcast_tx_sync requests", id),
@@ -213,4 +221,14 @@ func (c *KVStoreHTTPClient) Interact() {
 		}
 		return nil
 	})
+}
+
+// OnStartup is called prior to the first interaction's execution.
+func (c *KVStoreHTTPClient) OnStartup() {
+	c.factory.metrics.Clients.Inc()
+}
+
+// OnShutdown is called once this client is finished interacting.
+func (c *KVStoreHTTPClient) OnShutdown() {
+	c.factory.metrics.Clients.Dec()
 }

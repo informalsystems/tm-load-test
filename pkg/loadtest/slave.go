@@ -338,6 +338,7 @@ func (s *Slave) spawnClient(wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
 		c := s.clientFactory.NewClient()
+		c.OnStartup()
 	interactionLoop:
 		for i := 0; i < s.cfg.Clients.MaxInteractions; i++ {
 			c.Interact()
@@ -346,6 +347,7 @@ func (s *Slave) spawnClient(wg *sync.WaitGroup) {
 			}
 			s.interactionsc <- 1
 		}
+		c.OnShutdown()
 		wg.Done()
 	}()
 }
