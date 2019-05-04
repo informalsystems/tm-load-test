@@ -2,17 +2,18 @@
 
 By default, `tm-load-test` is built using a client that makes use of the native
 Tendermint RPC client to interact with a Tendermint network running the
-`kvstore` application.
+`kvstore` proxy application.
 
 If, however, you want to customize the load testing client for your own ABCI
-application, you can do so by implementing the `loadtest.ClientFactory` and
-`loadtest.Client` interfaces. An example of this is the provided Tendermint
-RPC-based client factory and client [here](./client.go#148).
+application, you can do so by implementing the `clients.ClientType`,
+`clients.Factory` and `clients.Client` interfaces. An example of this is the
+provided Tendermint RPC-based client factory and client
+[here](./clients/http.go).
 
 ## Interactions
 At a high level, a client executes **interactions**, where a single interaction
-is made up of a series of requests. For the provided `kvstore` application, the
-two requests that make up an interaction are:
+is made up of a series of requests. For the provided `kvstore-http` application,
+the two requests that make up an interaction are:
 
 1. Put a value into the `kvstore` by way of a `broadcast_tx_sync` request. This
    request is directed at a random Tendermint node in the network.
@@ -34,11 +35,13 @@ package main
 
 import (
     "github.com/interchainio/tm-load-test/pkg/loadtest"
+    "github.com/interchainio/tm-load-test/pkg/loadtest/clients"
 )
 
 func init() {
-    // Register your custom client factory here
-    loadtest.RegisterClientFactory("myclient", &MyCustomClientFactory{})
+    // Assumes newXYZClientType() is a function that instantiates your struct
+    // that implements clients.ClientType
+    clients.RegisterClientType("xyz-client", newXYZClientType())
 }
 
 func main() {
