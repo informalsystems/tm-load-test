@@ -8,23 +8,52 @@ testing [Tendermint](https://tendermint.com/) networks.
 ## Requirements
 In order to build and use the tools, you will need:
 
-* Go 1.11.5+
+* Go 1.12+
 * `make`
 
 ## Building
-To build the `tm-load-test` and `tm-outage-sim-server` binaries into the `build`
-directory:
+To build the `tm-load-test` binary in the `build` directory:
 
 ```bash
-> make
+make
 ```
+
+## Usage
+There is an example load testing configuration file in the `examples` folder.
+This example demonstrates usage with the following configuration:
+
+* A single Tendermint node with RPC endpoint available at `localhost:26657`
+* The load testing master bound to `localhost:35000`
+* 2 slaves bound to arbitrary ports on `localhost`
+* Each slave spawns 50 clients
+* Each client executes 100 interactions with the Tendermint node
+
+To run the example test, simply do the following from the folder into which you
+cloned the `tm-load-test` source:
+
+```bash
+# Initialize your local Tendermint node to ~/.tendermint
+tendermint init
+# Run a node with the kvstore proxy app
+tendermint node \
+    --proxy_app kvstore \
+    --consensus.create_empty_blocks=false
+
+# Run each of the following in a separate terminal (-v sets output logging to
+# DEBUG level)
+./build/tm-load-test -c examples/load-test.toml -master -v
+./build/tm-load-test -c examples/load-test.toml -slave -v
+./build/tm-load-test -c examples/load-test.toml -slave -v
+```
+
+And then watch the output logs to see the load testing progress.
 
 ## Development
 To run the linter and the tests:
 
 ```bash
-> make lint
-> make test
+make lint
+make test
 ```
 
 ## Scripts
