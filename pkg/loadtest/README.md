@@ -44,6 +44,11 @@ func init() {
     clients.RegisterClientType("xyz-client", newXYZClientType())
 }
 
+func newXYZClientType() clients.ClientType {
+    // implement your client type instantiation here
+    // ...
+}
+
 func main() {
     // This will parse command line flags, configuration, etc. and actually
     // execute the load testing framework in either master or slave mode,
@@ -56,8 +61,36 @@ func main() {
 Then, produce your own executable for your load testing application:
 
 ```bash
-go build -o build/my-tm-load-test ./path/to/my-tm-load-test.go
+# standard Go build
+GO111MODULE=on go build -o build/xyz-load-test ./main.go
 ```
 
 It can then be executed with the same parameters and configuration file as the
-standard [`tm-load-test`](../../cmd/tm-load-test/README.md) application.
+standard [`tm-load-test`](../../cmd/tm-load-test/README.md) application. The
+primary difference is that you would need to set your client type in the
+`[clients]` section of your `config.toml` file:
+
+```toml
+# config.toml
+# ...
+
+[clients]
+type = "xyz-client"
+
+# ...
+```
+
+Then run:
+
+```bash
+# each in a separate terminal
+./build/xyz-load-test -c config.toml -master
+./build/xyz-load-test -c config.toml -slave
+./build/xyz-load-test -c config.toml -slave
+# ...
+```
+
+## Testing Your Application
+See [here](./integration_test.go) for an example as to how to go about
+implementing a simple integration test that runs a full Tendermint node and
+executes a load test against it.

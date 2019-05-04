@@ -48,6 +48,10 @@ tendermint node \
 
 And then watch the output logs to see the load testing progress.
 
+## Customizing
+To implement your own client type to load test your own Tendermint ABCI
+application, see the [`loadtest` package docs here](./pkg/loadtest/README.md).
+
 ## Development
 To run the linter and the tests:
 
