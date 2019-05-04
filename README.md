@@ -35,9 +35,7 @@ cloned the `tm-load-test` source:
 # Initialize your local Tendermint node to ~/.tendermint
 tendermint init
 # Run a node with the kvstore proxy app
-tendermint node \
-    --proxy_app kvstore \
-    --consensus.create_empty_blocks=false
+tendermint node --proxy_app kvstore
 
 # Run each of the following in a separate terminal (-v sets output logging to
 # DEBUG level)
