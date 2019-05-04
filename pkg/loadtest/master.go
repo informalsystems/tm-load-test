@@ -164,15 +164,39 @@ func (m *Master) doLoadTest() error {
 			}
 
 		case <-progressTicker.C:
-			interactions := m.countInteractions()
-			progress := float64(100) * float64(interactions) / float64(m.getExpectedInteractions())
-			m.logger.Info(
-				"Load testing progress",
-				"interactions", interactions,
-				"progress", fmt.Sprintf("%.1f%%", progress),
-			)
+			m.logProgress()
 		}
 	}
+}
+
+func (m *Master) logProgress() {
+	interactions := m.countInteractions()
+	expectedInteractions := float64(m.getExpectedInteractions())
+	progress := float64(100) * float64(interactions) / expectedInteractions
+	totalSeconds := m.timeSinceStart().Seconds()
+	ips := float64(0)
+	if totalSeconds > 0 {
+		ips = float64(interactions) / totalSeconds
+	}
+	// extrapolate to try to find how long left for the test
+	expectedTotalSeconds := float64(0)
+	if ips > 0 {
+		expectedTotalSeconds = expectedInteractions / ips
+	}
+	timeLeft := time.Duration(int64(expectedTotalSeconds-totalSeconds)*1000) * time.Millisecond
+	m.logger.Info(
+		"Load testing progress",
+		"interactions", interactions,
+		"progress", fmt.Sprintf("%.1f%%", progress),
+		"interactionsPerSec", fmt.Sprintf("%.1f", ips),
+		"timeLeft", timeLeft.String(),
+	)
+}
+
+func (m *Master) timeSinceStart() time.Duration {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	return time.Since(m.startTime)
 }
 
 func (m *Master) countInteractions() int64 {
