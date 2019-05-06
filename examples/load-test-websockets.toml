@@ -107,10 +107,10 @@ max_test_time = "10m"
 #
 
 # The maximum time to wait before each request in an interaction.
-request_wait_min = "500ms"
+request_wait_min = "0ms"
 
 # The minimum time to wait before request in an interaction.
-request_wait_max = "1000ms"
+request_wait_max = "0ms"
 
 # After how long do we consider a request to have timed out?
 request_timeout = "5s"
