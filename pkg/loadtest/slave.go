@@ -27,6 +27,10 @@ const DefaultSlaveUpdateTimeout = 3 * time.Second
 // it's sent the kill signal to its clients for all of them to shut down.
 const DefaultSlaveClientsKillMaxWait = 30 * time.Second
 
+// DefaultSlaveKillCheckInterval specifies the interval at which the slave
+// checks whether it's been killed during load testing.
+const DefaultSlaveKillCheckInterval = 1 * time.Second
+
 type slaveState string
 
 const (
@@ -65,11 +69,14 @@ func NewSlave(cfg *Config) (*Slave, error) {
 	logger.Debug("Creating slave")
 	// We need to instantiate clientFactory before the Prometheus server
 	// otherwise the Prometheus metrics won't have been registered yet
-	clientFactory := clients.GetClientType(cfg.Clients.Type).NewFactory(
+	clientFactory, err := clients.GetClientType(cfg.Clients.Type).NewFactory(
 		cfg.Clients,
-		getOrGenerateHostID(slaveID),
 		cfg.TestNetwork.GetTargetRPCURLs(),
+		getOrGenerateHostID(slaveID),
 	)
+	if err != nil {
+		return nil, err
+	}
 	// instantiate the Prometheus metrics server
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
@@ -189,7 +196,11 @@ func (s *Slave) run() error {
 		return s.failAndUpdateStateWithMaster(err)
 	}
 
-	if !s.mustKill() && s.cfg.Slave.WaitAfterFinished > 0 {
+	if s.mustKill() {
+		return NewError(ErrSlaveFailed, nil, "slave killed")
+	}
+
+	if s.cfg.Slave.WaitAfterFinished > 0 {
 		s.logger.Info(
 			"Waiting predefined time period after completion of testing",
 			"duration",
@@ -323,61 +334,93 @@ func (s *Slave) doLoadTest() error {
 
 	s.trackTestStart()
 	var wg sync.WaitGroup
+
 	// spawn all of our clients in batches
-	for totalSpawned := int64(0); totalSpawned < int64(s.cfg.Clients.Spawn); totalSpawned += int64(rate) {
-		toSpawn := int64(rate)
-		// make sure we only spawn precisely the required number of clients
-		if (totalSpawned + int64(toSpawn)) > int64(s.cfg.Clients.Spawn) {
-			toSpawn = int64(s.cfg.Clients.Spawn) - totalSpawned
-		}
-		// spawn a batch
-		s.spawnClientBatch(toSpawn, &wg)
-		// wait a bit before spawning the next batch, but allow for the slave to
-		// be killed here
-		if s.mustKill() {
+	totalSpawned := 0
+	spawnTicker := time.NewTicker(delay)
+	defer spawnTicker.Stop()
+	testTimeoutTicker := time.NewTicker(s.cfg.Clients.MaxTestTime.Duration())
+	defer testTimeoutTicker.Stop()
+	killCheckTicker := time.NewTicker(DefaultSlaveKillCheckInterval)
+	defer killCheckTicker.Stop()
+
+spawnLoop:
+	for {
+		select {
+		case <-spawnTicker.C:
+			totalSpawned += s.spawnClientBatch(totalSpawned, rate, &wg)
+			if totalSpawned >= s.cfg.Clients.Spawn {
+				s.logger.Info("All clients spawned", "count", totalSpawned)
+				break spawnLoop
+			}
+
+		case <-killCheckTicker.C:
+			if s.mustKill() {
+				s.killClientsAndWait(&wg, nil)
+				return s.failAndUpdateStateWithMaster(NewError(ErrSlaveFailed, nil, "slave killed"))
+			}
+
+		case <-testTimeoutTicker.C:
+			s.logger.Info("Load test completed: maximum test time reached", "time", s.timeSinceStart())
 			s.killClientsAndWait(&wg, nil)
-			return s.failAndUpdateStateWithMaster(fmt.Errorf("slave killed"))
+			return s.updateStateWithMaster(slaveFinished, "Slave maximum load test time reached")
 		}
-		time.Sleep(delay)
 	}
-	return s.waitForClientsToFinish(&wg, s.getStartTime(), s.cfg.Clients.MaxTestTime.Duration())
+	return s.waitForClientsToFinish(&wg)
 }
 
-func (s *Slave) spawnClientBatch(count int64, wg *sync.WaitGroup) {
-	s.logger.Info("Spawning client batch", "count", count)
-	for i := int64(0); i < count; i++ {
+// Attempts to spawn `rate` new clients, depending on how many clients have
+// already been spawned. Returns the number of clients actually spawned, trying
+// to maintain tight control to spawn precisely the number required by the
+// configuration.
+func (s *Slave) spawnClientBatch(totalSpawned, rate int, wg *sync.WaitGroup) int {
+	toSpawn := rate
+	// make sure we only spawn precisely the required number of clients
+	if (totalSpawned + toSpawn) > s.cfg.Clients.Spawn {
+		toSpawn = s.cfg.Clients.Spawn - totalSpawned
+	}
+	if toSpawn < 0 {
+		return 0
+	}
+	s.logger.Info("Spawning client batch", "count", toSpawn)
+	for i := 0; i < toSpawn; i++ {
 		s.spawnClient(wg)
 	}
+	return toSpawn
 }
 
-func (s *Slave) waitForClientsToFinish(wg *sync.WaitGroup, startTime time.Time, testTimeLeft time.Duration) error {
+func (s *Slave) waitForClientsToFinish(wg *sync.WaitGroup) error {
 	donec := make(chan struct{})
 	go func() {
 		defer close(donec)
 		wg.Wait()
 	}()
-loop:
+
+	killCheckTicker := time.NewTicker(DefaultSlaveKillCheckInterval)
+	defer killCheckTicker.Stop()
+	// account for the spawning time
+	testTimeoutTicker := time.NewTicker(s.cfg.Clients.MaxTestTime.Duration() - s.timeSinceStart())
+	defer testTimeoutTicker.Stop()
+
 	for {
-		// if the slave's being killed
-		if s.mustKill() {
-			s.logger.Info("Slave kill signal received")
-			s.killClientsAndWait(nil, donec)
-			return s.updateStateWithMaster(slaveFailed, "Slave killed")
-		}
-		testTime := time.Since(startTime)
-		if testTime > testTimeLeft {
-			s.logger.Info("Load test completed: maximum test time reached", "time", testTime)
-			s.killClientsAndWait(nil, donec)
-			break loop
-		}
 		select {
+		case <-killCheckTicker.C:
+			if s.mustKill() {
+				s.logger.Info("Slave kill signal received")
+				s.killClientsAndWait(nil, donec)
+				return s.failAndUpdateStateWithMaster(NewError(ErrSlaveFailed, nil, "slave killed"))
+			}
+
+		case <-testTimeoutTicker.C:
+			s.logger.Info("Load test completed: maximum test time reached", "time", s.timeSinceStart())
+			s.killClientsAndWait(nil, donec)
+			return s.updateStateWithMaster(slaveFinished, "Slave maximum load test time reached")
+
 		case <-donec:
 			s.logger.Info("Load test completed: maximum interactions executed", "interactions", s.maxInteractions)
-			break loop
-		case <-time.After(1 * time.Second):
+			return s.updateStateWithMaster(slaveFinished, "Slave executed maximum number of interactions")
 		}
 	}
-	return s.updateStateWithMaster(slaveFinished, "Slave has completed load testing")
 }
 
 func (s *Slave) killClientsAndWait(wg *sync.WaitGroup, donec chan struct{}) {
@@ -396,8 +439,15 @@ func (s *Slave) killClientsAndWait(wg *sync.WaitGroup, donec chan struct{}) {
 func (s *Slave) spawnClient(wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
+		defer wg.Done()
+
 		c := s.clientFactory.NewClient()
-		c.OnStartup()
+		if err := c.OnStartup(); err != nil {
+			s.logger.Error("Client instantiation failed", "err", err)
+			s.Kill()
+			return
+		}
+		defer c.OnShutdown()
 	interactionLoop:
 		for i := 0; i < s.cfg.Clients.MaxInteractions; i++ {
 			c.Interact()
@@ -406,8 +456,6 @@ func (s *Slave) spawnClient(wg *sync.WaitGroup) {
 			}
 			s.interactionsc <- 1
 		}
-		c.OnShutdown()
-		wg.Done()
 	}()
 }
 

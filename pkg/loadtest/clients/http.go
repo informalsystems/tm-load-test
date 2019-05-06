@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
+	"net/url"
 	"time"
 
 	"github.com/interchainio/tm-load-test/internal/logging"
@@ -43,7 +44,7 @@ type KVStoreHTTPMetrics struct {
 	Count         prometheus.Counter
 	Failures      prometheus.Counter
 	Errors        *prometheus.CounterVec
-	ResponseTimes prometheus.Histogram
+	ResponseTimes prometheus.Summary
 }
 
 // KVStoreHTTPCombinedMetrics encapsulates the metrics relevant to the load test.
@@ -81,10 +82,11 @@ func newKVStoreHTTPMetrics(kind, desc, host string) *KVStoreHTTPMetrics {
 			},
 			[]string{"Error"},
 		),
-		ResponseTimes: promauto.NewHistogram(
-			prometheus.HistogramOpts{
-				Name: fmt.Sprintf("loadtest_kvstorehttp_%s_%s_response_times", kind, host),
-				Help: fmt.Sprintf("Response time histogram for %s with the kvstore app via the HTTP RPC during load testing", desc),
+		ResponseTimes: promauto.NewSummary(
+			prometheus.SummaryOpts{
+				Name:       fmt.Sprintf("loadtest_kvstorehttp_%s_%s_response_times_ms", kind, host),
+				Help:       fmt.Sprintf("Response time summary (in milliseconds) for %s with the kvstore app via the HTTP RPC during load testing", desc),
+				Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
 			},
 		),
 	}
@@ -103,12 +105,23 @@ func NewKVStoreHTTPClientType() *KVStoreHTTPClientType {
 }
 
 // NewFactory instantiates a KVStoreHTTPFactory with the given parameters.
-func (ct *KVStoreHTTPClientType) NewFactory(cfg Config, id string, targets []string) Factory {
+func (ct *KVStoreHTTPClientType) NewFactory(cfg Config, targets []string, id string) (Factory, error) {
 	ct.logger.Debug("Creating Prometheus metrics", "factoryID", id)
+	var httpTargets []string
+	for _, target := range targets {
+		u, err := url.Parse(target)
+		if err != nil {
+			return nil, err
+		}
+		if u.Scheme == "tcp" {
+			u.Scheme = "http"
+		}
+		httpTargets = append(httpTargets, u.String())
+	}
 	return &KVStoreHTTPFactory{
 		cfg:     cfg,
 		id:      id,
-		targets: targets,
+		targets: httpTargets,
 		metrics: &KVStoreHTTPCombinedMetrics{
 			Clients: promauto.NewGauge(
 				prometheus.GaugeOpts{
@@ -122,7 +135,7 @@ func (ct *KVStoreHTTPClientType) NewFactory(cfg Config, id string, targets []str
 				"abci_query":        newKVStoreHTTPMetrics("abci_query", "abci_query requests", id),
 			},
 		},
-	}
+	}, nil
 }
 
 // ----------------------------------------------------------------------------
@@ -157,7 +170,7 @@ func (c *KVStoreHTTPClient) randomTarget() *client.HTTP {
 
 func (c *KVStoreHTTPClient) measureInteraction(fn func() error) {
 	timeTaken, err := TimeFn(fn)
-	c.factory.metrics.Interactions.ResponseTimes.Observe(timeTaken.Seconds())
+	c.factory.metrics.Interactions.ResponseTimes.Observe(timeTaken.Seconds() * 1000)
 
 	if err != nil {
 		c.factory.metrics.Interactions.Failures.Inc()
@@ -171,7 +184,7 @@ func (c *KVStoreHTTPClient) measureRequest(reqID string, fn func() error) error 
 	startTime := time.Now()
 	err := fn()
 	timeTaken := time.Since(startTime)
-	c.factory.metrics.Requests[reqID].ResponseTimes.Observe(timeTaken.Seconds())
+	c.factory.metrics.Requests[reqID].ResponseTimes.Observe(timeTaken.Seconds() * 1000)
 
 	if err != nil {
 		c.factory.metrics.Requests[reqID].Failures.Inc()
@@ -224,8 +237,9 @@ func (c *KVStoreHTTPClient) Interact() {
 }
 
 // OnStartup is called prior to the first interaction's execution.
-func (c *KVStoreHTTPClient) OnStartup() {
+func (c *KVStoreHTTPClient) OnStartup() error {
 	c.factory.metrics.Clients.Inc()
+	return nil
 }
 
 // OnShutdown is called once this client is finished interacting.

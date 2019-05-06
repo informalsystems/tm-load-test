@@ -7,8 +7,8 @@ import (
 
 // ClientType produces client factories.
 type ClientType interface {
-	// New must take the given parameters and construct a Factory.
-	NewFactory(cfg Config, host string, targets []string) Factory
+	// NewFactory must take the given parameters and construct a Factory.
+	NewFactory(cfg Config, targets []string, id string) (Factory, error)
 }
 
 // Factory produces clients.
@@ -26,8 +26,9 @@ type Client interface {
 	Interact()
 
 	// OnStartup is an event that is called prior to the first interaction for
-	// this client.
-	OnStartup()
+	// this client. If this function returns an error, it will cause the slave
+	// to fail and thus fail the entire load testing operation.
+	OnStartup() error
 
 	// OnShutdown is called once this client has finished all of its
 	// interactions.
