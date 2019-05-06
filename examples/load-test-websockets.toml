@@ -64,18 +64,23 @@ wait_after_finished = "10s"
     # is set to false.
     [[test_network.targets]]
     id = "localhost"
-    url = "http://localhost:26657"
+    url = "ws://localhost:26657/websocket"
 
 [clients]
 # What type of client to spawn. The `kvstore-http` client will interact with the
-# `kvstore` ABCI application via the HTTP RPC on the nodes.
-type = "kvstore-http"
+# `kvstore` ABCI application via the HTTP RPC on the nodes. The
+# `kvstore-websockets` client also interacts with the `kvstore` ABCI app, but
+# via WebSockets.
+type = "kvstore-websockets"
 
 # Additional parameters specific to this particular type of client.
 additional_params = ""
 
-# The number of clients to spawn per slave.
-spawn = 50
+# The number of clients to spawn per slave. NOTE: For WebSockets-based
+# connectivity, a Tendermint node only allows up to a predefined number of
+# subscriptions, and each client spawned requires a subscription to monitor for
+# when its transaction has been committed.
+spawn = 20
 
 # The rate at which new clients should be spawned on each slave, per second. A
 # value of 10 would mean that every second, 10 new clients will be spawned on

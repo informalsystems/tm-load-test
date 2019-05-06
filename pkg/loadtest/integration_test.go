@@ -8,7 +8,6 @@ import (
 
 	"github.com/interchainio/tm-load-test/pkg/loadtest"
 	"github.com/sirupsen/logrus"
-	"github.com/tendermint/tendermint/abci/example/kvstore"
 	rpctest "github.com/tendermint/tendermint/rpc/test"
 )
 
@@ -39,8 +38,40 @@ spawn_rate = 10.0
 max_interactions = 1
 interaction_timeout = "11s"
 max_test_time = "10m"
-request_wait_min = "50ms"
-request_wait_max = "100ms"
+request_wait_min = "5ms"
+request_wait_max = "10ms"
+request_timeout = "5s"
+`
+
+const kvstoreWebSocketsConfig = `[master]
+bind = "{{.MasterAddr}}"
+expect_slaves = 2
+expect_slaves_within = "1m"
+
+[slave]
+bind = "127.0.0.1:"
+master = "http://{{.MasterAddr}}"
+expect_master_within = "1m"
+expect_start_within = "1m"
+
+[test_network]
+    [test_network.autodetect]
+    enabled = false
+
+    [[test_network.targets]]
+    id = "host1"
+    url = "{{.RPCAddr}}/websocket"
+
+[clients]
+type = "kvstore-websockets"
+additional_params = ""
+spawn = 10
+spawn_rate = 10.0
+max_interactions = 1
+interaction_timeout = "11s"
+max_test_time = "10m"
+request_wait_min = "0ms"
+request_wait_max = "0ms"
 request_timeout = "5s"
 `
 
@@ -86,10 +117,15 @@ func init() {
 }
 
 func TestKVStoreHTTPIntegrationWithTendermintNode(t *testing.T) {
-	node := rpctest.StartTendermint(kvstore.NewKVStoreApplication())
-	defer rpctest.StopTendermint(node)
+	runIntegrationTest(t, kvstoreHTTPConfig)
+}
 
-	testCfg, err := generateConfig(kvstoreHTTPConfig)
+func TestKVStoreWebSocketsIntegrationWithTendermintNode(t *testing.T) {
+	runIntegrationTest(t, kvstoreWebSocketsConfig)
+}
+
+func runIntegrationTest(t *testing.T, rawConfig string) {
+	testCfg, err := generateConfig(rawConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
