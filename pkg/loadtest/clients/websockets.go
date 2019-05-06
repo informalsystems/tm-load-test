@@ -304,8 +304,10 @@ func (c *KVStoreWebSocketsClient) waitUntilStopped() {
 // attempts to read it back.
 func (c *KVStoreWebSocketsClient) Interact() {
 	c.measureInteraction(func() error {
+		RandomSleep(c.factory.cfg.RequestWaitMin.Duration(), c.factory.cfg.RequestWaitMax.Duration())
 		// we use our client ID as the key because the kvstore proxy app tags
-		// transactions according to the key used
+		// transactions according to the key used - this allows us to receive
+		// events for our particular transactions
 		return c.putAndWaitForCommit(c.id, cmn.RandStr(8))
 	})
 }
