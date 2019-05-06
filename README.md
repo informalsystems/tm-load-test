@@ -60,7 +60,25 @@ tendermint node --proxy_app kvstore
 ./examples/run.sh examples/load-test.toml
 ```
 
-## Customizing
+## Load Testing Clients
+There are 2 [clients](./pkg/loadtest/clients/) provided at present, both of
+which require the `kvstore` or `persistent_kvstore` ABCI apps running on your
+Tendermint network:
+
+* `kvstore-http` - Allows for load testing via the standard Tendermint RPC
+  client (which interacts over HTTP, with a separate HTTP request for each
+  interaction).
+* `kvstore-websockets` - Allows for load testing via the Tendermint WebSockets
+  RPC interface. Note that this requires the use of Tendermint's event
+  subscription subsystem, which means that you can have a maximum of 99 clients
+  per Tendermint node before your slaves will start failing. Each spawned load
+  testing client will create a separate WebSockets connection to a single random
+  target node.
+
+See the [examples](./examples/) folder for examples of load testing
+configuration files that make use of each of these client types.
+
+### Customizing
 To implement your own client type to load test your own Tendermint ABCI
 application, see the [`loadtest` package docs here](./pkg/loadtest/README.md).
 
