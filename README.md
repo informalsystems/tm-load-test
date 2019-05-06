@@ -46,6 +46,20 @@ tendermint node --proxy_app kvstore
 
 And then watch the output logs to see the load testing progress.
 
+Alternatively, there is a `run.sh` script provided in the `examples` folder that
+will help with executing load tests where 1 master and 2 slaves are required. To
+run the examples for this, simply do the following:
+
+```bash
+# For a fresh Tendermint setup
+tendermint init
+tendermint node --proxy_app kvstore
+
+# Runs 2 slaves in the background and the master in the foreground, so you can
+# easily kill the load test (Ctrl+C)
+./examples/run.sh examples/load-test.toml
+```
+
 ## Customizing
 To implement your own client type to load test your own Tendermint ABCI
 application, see the [`loadtest` package docs here](./pkg/loadtest/README.md).
