@@ -24,3 +24,5 @@ __pycache__
 *.retry
 .idea
 .terragrunt-cache
+/*.log
+
