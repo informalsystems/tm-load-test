@@ -65,6 +65,7 @@ type TestNetworkAutodetectConfig struct {
 	SeedNode            string                      `toml:"seed_node"`      // The seed node from which to find other peers/targets.
 	ExpectTargets       int                         `toml:"expect_targets"` // The number of targets to expect prior to starting load testing.
 	ExpectTargetsWithin timeutils.ParseableDuration `toml:"expect_targets_within"`
+	TargetSeedNode      bool                        `toml:"target_seed_node"` // Whether or not to include the seed node itself in load testing.
 }
 
 // TestNetworkTargetConfig encapsulates the configuration for each node in the

@@ -188,6 +188,12 @@ func (m *Master) querySeedForTargets(c *client.HTTP) error {
 			URL: fmt.Sprintf("%s://%s:%s", peerURL.Scheme, peer.RemoteIP, peerURL.Port()),
 		}
 	}
+	if m.cfg.TestNetwork.Autodetect.TargetSeedNode {
+		m.targets[m.cfg.TestNetwork.Autodetect.SeedNode] = TestNetworkTargetConfig{
+			ID:  "seed_node",
+			URL: m.cfg.TestNetwork.Autodetect.SeedNode,
+		}
+	}
 	m.logger.Debug("Got response from seed node", "targetCount", len(m.targets))
 	return nil
 }

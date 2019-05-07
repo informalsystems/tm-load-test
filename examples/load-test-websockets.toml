@@ -60,6 +60,9 @@ wait_after_finished = "10s"
     # number of targets before considering the entire load test a failure.
     expect_targets_within = "3m"
 
+    # Whether or not to consider the seed node as part of the test network.
+    target_seed_node = false
+
     # This array is only taken into account if test_network.autodetect.enabled
     # is set to false.
     [[test_network.targets]]

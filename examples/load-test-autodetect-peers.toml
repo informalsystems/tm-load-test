@@ -50,7 +50,7 @@ wait_after_finished = "10s"
 
     # If test_network.autodetect.enabled is set to true, this seed_node address
     # will be used to try to obtain a list of targets for load testing.
-    seed_node = "tcp://localhost:26657"
+    seed_node = "tcp://tik0.staging.interchain.io:26657"
 
     # If test_network.autodetect.enabled is set to true, this is how many
     # targets to expect prior to starting the load testing.
@@ -59,6 +59,9 @@ wait_after_finished = "10s"
     # The maximum time to wait while polling the seed_node for the required
     # number of targets before considering the entire load test a failure.
     expect_targets_within = "3m"
+
+    # Whether or not to consider the seed node as part of the test network.
+    target_seed_node = true
 
     # This array is only taken into account if test_network.autodetect.enabled
     # is set to false.
