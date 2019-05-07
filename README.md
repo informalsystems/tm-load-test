@@ -19,8 +19,8 @@ make
 ```
 
 ## Usage
-There is an example load testing configuration file in the `examples` folder.
-This example demonstrates usage with the following configuration:
+There are example load testing configuration files in the `examples` folder. The
+`load-test.toml` example demonstrates usage with the following configuration:
 
 * A single Tendermint node with RPC endpoint available at `localhost:26657`
 * The load testing master bound to `localhost:35000`
