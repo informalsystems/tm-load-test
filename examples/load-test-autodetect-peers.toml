@@ -54,7 +54,7 @@ wait_after_finished = "10s"
 
     # If test_network.autodetect.enabled is set to true, this is how many
     # targets to expect prior to starting the load testing.
-    expect_targets = 3
+    expect_targets = 1
 
     # The maximum time to wait while polling the seed_node for the required
     # number of targets before considering the entire load test a failure.
