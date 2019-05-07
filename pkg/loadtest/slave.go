@@ -1,6 +1,7 @@
 package loadtest
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -56,10 +57,11 @@ type Slave struct {
 
 	mtx             sync.Mutex
 	id              string
-	flagKill        bool      // Set to true when the slave must be killed.
-	flagKillClients bool      // Set to true when the clients must be killed (doesn't necessarily mean the slave must be killed).
-	startTime       time.Time // When the testing was started.
-	interactions    int64     // A count of all of the interactions executed so far.
+	flagKill        bool                      // Set to true when the slave must be killed.
+	flagKillClients bool                      // Set to true when the clients must be killed (doesn't necessarily mean the slave must be killed).
+	startTime       time.Time                 // When the testing was started.
+	interactions    int64                     // A count of all of the interactions executed so far.
+	targets         []TestNetworkTargetConfig // Targets for when autodetection is enabled.
 }
 
 // NewSlave will instantiate a new slave node with the given configuration.
@@ -71,7 +73,6 @@ func NewSlave(cfg *Config) (*Slave, error) {
 	// otherwise the Prometheus metrics won't have been registered yet
 	clientFactory, err := clients.GetClientType(cfg.Clients.Type).NewFactory(
 		cfg.Clients,
-		cfg.TestNetwork.GetTargetRPCURLs(),
 		getOrGenerateHostID(slaveID),
 	)
 	if err != nil {
@@ -183,6 +184,26 @@ func (s *Slave) getStartTime() time.Time {
 	return s.startTime
 }
 
+func (s *Slave) getTargets() []string {
+	targets := s.cfg.TestNetwork.Targets
+	if s.cfg.TestNetwork.Autodetect.Enabled {
+		s.mtx.Lock()
+		targets = s.targets
+		s.mtx.Unlock()
+	}
+	targetURLs := make([]string, 0)
+	for _, target := range targets {
+		targetURLs = append(targetURLs, target.URL)
+	}
+	return targetURLs
+}
+
+func (s *Slave) setTargets(targets []TestNetworkTargetConfig) {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	s.targets = targets
+}
+
 // Runs the overall load testing operation, keeping track of the state as it
 // goes.
 func (s *Slave) run() error {
@@ -213,7 +234,7 @@ func (s *Slave) run() error {
 }
 
 func (s *Slave) failAndUpdateStateWithMaster(err error) error {
-	if e := s.updateStateWithMaster(slaveFailed, err.Error()); e != nil {
+	if _, e := s.updateStateWithMaster(slaveFailed, err.Error()); e != nil {
 		s.logger.Error("Failed to send state update to master", "err", e)
 	}
 	// do a pass-through of the error
@@ -222,7 +243,7 @@ func (s *Slave) failAndUpdateStateWithMaster(err error) error {
 
 // Does long polling to try to eventually convince the master to change the
 // state of this slave.
-func (s *Slave) updateStateWithMaster(state slaveState, status string) error {
+func (s *Slave) updateStateWithMaster(state slaveState, status string) ([]byte, error) {
 	rs := remoteSlave{
 		ID:           s.getID(),
 		State:        state,
@@ -232,25 +253,24 @@ func (s *Slave) updateStateWithMaster(state slaveState, status string) error {
 	// tell the master we want to set the state for this slave
 	msg, err := toJSON(&rs)
 	if err != nil {
-		return NewError(ErrSlaveFailed, err, "failed to marshal JSON message")
+		return nil, NewError(ErrSlaveFailed, err, "failed to marshal JSON message")
 	}
 
 	reqURL := fmt.Sprintf("%s/slave", s.cfg.Slave.Master)
 	s.logger.Debug("Long polling master", "url", reqURL, "state", rs.State, "interactions", rs.Interactions)
 	req, err := http.NewRequest("POST", reqURL, strings.NewReader(msg))
 	if err != nil {
-		return NewError(ErrSlaveFailed, err, "failed to construct request")
+		return nil, NewError(ErrSlaveFailed, err, "failed to construct request")
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	_, err = longPoll(
+	return longPoll(
 		req,
 		DefaultSlaveLongPollTimeout,
 		s.cfg.Slave.ExpectMasterWithin.Duration(),
 		s.mustKill,
 		s.logger,
 	)
-	return err
 }
 
 // Send an update to the master to tell it how far this slave is with its load
@@ -314,13 +334,29 @@ func (s *Slave) timeSinceStart() time.Duration {
 // Keeps trying to register with the master until it succeeds or times out.
 func (s *Slave) register() error {
 	s.logger.Info("Attempting to register with master")
-	return s.updateStateWithMaster(slaveAccepted, "Slave registered with master")
+	resBody, err := s.updateStateWithMaster(slaveAccepted, "Slave registered with master")
+	if err != nil {
+		return err
+	}
+	if s.cfg.TestNetwork.Autodetect.Enabled {
+		targets, err := parseTargetsFromResponse(resBody)
+		if err != nil {
+			return NewError(ErrSlaveFailed, err, "failed to parse targets from master response")
+		}
+		s.setTargets(targets)
+	}
+	if err := s.clientFactory.SetTargets(s.getTargets()); err != nil {
+		return NewError(ErrSlaveFailed, err, "failed to configure targets for client factory")
+	}
+	s.logger.Debug("Set client factory targets", "targets", s.getTargets())
+	return nil
 }
 
 // Keeps polling the master to see when it's time to start the load testing.
 func (s *Slave) waitToStart() error {
 	s.logger.Info("Polling master to check if ready")
-	return s.updateStateWithMaster(slaveTesting, "Slave has started load testing")
+	_, err := s.updateStateWithMaster(slaveTesting, "Slave has started load testing")
+	return err
 }
 
 // Does the actual load test execution.
@@ -363,7 +399,8 @@ spawnLoop:
 		case <-testTimeoutTicker.C:
 			s.logger.Info("Load test completed: maximum test time reached", "time", s.timeSinceStart())
 			s.killClientsAndWait(&wg, nil)
-			return s.updateStateWithMaster(slaveFinished, "Slave maximum load test time reached")
+			_, err := s.updateStateWithMaster(slaveFinished, "Slave maximum load test time reached")
+			return err
 		}
 	}
 	return s.waitForClientsToFinish(&wg)
@@ -414,11 +451,13 @@ func (s *Slave) waitForClientsToFinish(wg *sync.WaitGroup) error {
 		case <-testTimeoutTicker.C:
 			s.logger.Info("Load test completed: maximum test time reached", "time", s.timeSinceStart())
 			s.killClientsAndWait(nil, donec)
-			return s.updateStateWithMaster(slaveFinished, "Slave maximum load test time reached")
+			_, err := s.updateStateWithMaster(slaveFinished, "Slave maximum load test time reached")
+			return err
 
 		case <-donec:
 			s.logger.Info("Load test completed: maximum interactions executed", "interactions", s.maxInteractions)
-			return s.updateStateWithMaster(slaveFinished, "Slave executed maximum number of interactions")
+			_, err := s.updateStateWithMaster(slaveFinished, "Slave executed maximum number of interactions")
+			return err
 		}
 	}
 }
@@ -491,6 +530,16 @@ func (s *Slave) shutdown() {
 	}
 }
 
+//-----------------------------------------------------------------------------
+
 func generateSlaveID() string {
 	return cmn.RandStr(8)
+}
+
+func parseTargetsFromResponse(resBody []byte) ([]TestNetworkTargetConfig, error) {
+	var tnt testNetworkTargets
+	if err := json.Unmarshal(resBody, &tnt); err != nil {
+		return nil, err
+	}
+	return tnt.Targets, nil
 }

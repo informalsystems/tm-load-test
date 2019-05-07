@@ -8,11 +8,16 @@ import (
 // ClientType produces client factories.
 type ClientType interface {
 	// NewFactory must take the given parameters and construct a Factory.
-	NewFactory(cfg Config, targets []string, id string) (Factory, error)
+	NewFactory(cfg Config, id string) (Factory, error)
 }
 
 // Factory produces clients.
 type Factory interface {
+	// SetTargets must allow the caller to configure the targets for load
+	// testing prior to execution.
+	SetTargets(targets []string) error
+
+	// NewClient instantiates a client.
 	NewClient() Client
 }
 

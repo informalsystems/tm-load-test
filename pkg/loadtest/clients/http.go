@@ -105,23 +105,12 @@ func NewKVStoreHTTPClientType() *KVStoreHTTPClientType {
 }
 
 // NewFactory instantiates a KVStoreHTTPFactory with the given parameters.
-func (ct *KVStoreHTTPClientType) NewFactory(cfg Config, targets []string, id string) (Factory, error) {
+func (ct *KVStoreHTTPClientType) NewFactory(cfg Config, id string) (Factory, error) {
 	ct.logger.Debug("Creating Prometheus metrics", "factoryID", id)
-	var httpTargets []string
-	for _, target := range targets {
-		u, err := url.Parse(target)
-		if err != nil {
-			return nil, err
-		}
-		if u.Scheme == "tcp" {
-			u.Scheme = "http"
-		}
-		httpTargets = append(httpTargets, u.String())
-	}
 	return &KVStoreHTTPFactory{
 		cfg:     cfg,
 		id:      id,
-		targets: httpTargets,
+		targets: make([]string, 0),
 		metrics: &KVStoreHTTPCombinedMetrics{
 			Clients: promauto.NewGauge(
 				prometheus.GaugeOpts{
@@ -141,6 +130,24 @@ func (ct *KVStoreHTTPClientType) NewFactory(cfg Config, targets []string, id str
 // ----------------------------------------------------------------------------
 // KVStoreHTTPFactory
 //
+
+// SetTargets parses the given list of target strings and ensures that they're
+// all HTTP/HTTPS URLs.
+func (f *KVStoreHTTPFactory) SetTargets(targets []string) error {
+	var httpTargets []string
+	for _, target := range targets {
+		u, err := url.Parse(target)
+		if err != nil {
+			return err
+		}
+		if u.Scheme == "tcp" {
+			u.Scheme = "http"
+		}
+		httpTargets = append(httpTargets, u.String())
+	}
+	f.targets = httpTargets
+	return nil
+}
 
 // NewClient instantiates a new client for interaction with a Tendermint
 // network.

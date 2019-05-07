@@ -3,6 +3,7 @@ package loadtest
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"sync"
 	"time"
@@ -98,8 +99,9 @@ func (s *baseServer) shutdown() error {
 // to keep sending the given request until it gets a positive response, or if
 // the server responds with a failure status code (>= 400), or if the routine
 // runs for longer than `overallTimeout`, or if the `cancel` function returns
-// true.
-func longPoll(req *http.Request, singlePollTimeout, overallTimeout time.Duration, cancel func() bool, logger logging.Logger) (*http.Response, error) {
+// true. Returns the body of the response (as a byte array), as well as any
+// error that may have occurred during polling.
+func longPoll(req *http.Request, singlePollTimeout, overallTimeout time.Duration, cancel func() bool, logger logging.Logger) ([]byte, error) {
 	client := &http.Client{
 		Timeout: singlePollTimeout,
 	}
@@ -113,10 +115,14 @@ func longPoll(req *http.Request, singlePollTimeout, overallTimeout time.Duration
 			defer res.Body.Close()
 			logger.Debug("Got response", "code", res.StatusCode)
 			if res.StatusCode == 200 {
+				body, err := ioutil.ReadAll(res.Body)
+				if err != nil {
+					return nil, err
+				}
 				// all's good
-				return res, nil
+				return body, nil
 			} else if res.StatusCode >= 400 {
-				return res, fmt.Errorf("request failed with status code %d", res.StatusCode)
+				return nil, fmt.Errorf("request failed with status code %d", res.StatusCode)
 			} else {
 				logger.Debug("Server not ready yet")
 			}
@@ -139,8 +145,13 @@ func longPoll(req *http.Request, singlePollTimeout, overallTimeout time.Duration
 	}
 }
 
-func jsonResponse(w http.ResponseWriter, msg string, code int) {
-	s, err := toJSON(&resMessage{Message: msg})
+func jsonResponse(w http.ResponseWriter, msg interface{}, code int) {
+	m := msg
+	msgString, isString := msg.(string)
+	if isString {
+		m = resMessage{Message: msgString}
+	}
+	s, err := toJSON(&m)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Internal server error: %v", err), http.StatusInternalServerError)
 		return
