@@ -4,12 +4,18 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
 	"github.com/interchainio/tm-load-test/internal/logging"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/tendermint/tendermint/rpc/client"
 )
+
+// The maximum number of failures to tolerate when attempting to query for peers
+// from a Tendermint seed node before failing the master.
+const defaultSeedPollMaxFailures = 5
 
 // Master is an entity that coordinates the load testing across multiple slave
 // nodes, tracking progress and failures.
@@ -26,6 +32,7 @@ type Master struct {
 	flagKill             bool
 	shutdownErr          error
 	expectedInteractions int64
+	targets              map[string]TestNetworkTargetConfig // For autodetection
 
 	// For tracking HTTP long polling requests that're waiting for the go-ahead
 	// to start testing.
@@ -39,8 +46,10 @@ type slaveRequest struct {
 	errc  chan error
 }
 
+type stillWaitingForTargets struct{}
 type stillWaitingForSlaves struct{}
 
+var _ error = (*stillWaitingForTargets)(nil)
 var _ error = (*stillWaitingForSlaves)(nil)
 
 // NewMaster instantiates a new master node for load testing.
@@ -54,6 +63,7 @@ func NewMaster(cfg *Config) (*Master, error) {
 		expectedInteractions: int64(cfg.Master.ExpectSlaves) * int64(cfg.Clients.Spawn) * int64(cfg.Clients.MaxInteractions),
 		readySubscribers:     make(map[int]chan bool),
 		slavec:               make(chan slaveRequest, cfg.Master.ExpectSlaves),
+		targets:              make(map[string]TestNetworkTargetConfig),
 	}
 	if m.expectedInteractions <= 0 {
 		return nil, NewError(ErrInvalidConfig, nil, "total expected interactions must be greater than 0")
@@ -80,6 +90,12 @@ func (m *Master) Run() (*Summary, error) {
 	}
 	defer m.shutdown()
 
+	if m.cfg.TestNetwork.Autodetect.Enabled {
+		if err := m.pollForTargets(); err != nil {
+			return nil, m.fail(err)
+		}
+	}
+
 	if err := m.waitForSlaves(); err != nil {
 		return nil, m.fail(err)
 	}
@@ -98,6 +114,108 @@ func (m *Master) Run() (*Summary, error) {
 	}
 
 	return m.getSummary(), m.getShutdownErr()
+}
+
+func (m *Master) pollForTargets() error {
+	m.logger.Info("Polling for targets", "seedNode", m.cfg.TestNetwork.Autodetect.SeedNode)
+	killCheckTicker := time.NewTicker(100 * time.Millisecond)
+	defer killCheckTicker.Stop()
+	seedPollTicker := time.NewTicker(2 * time.Second)
+	defer seedPollTicker.Stop()
+	seedPollTimeout := time.NewTicker(m.cfg.TestNetwork.Autodetect.ExpectTargetsWithin.Duration())
+	defer seedPollTimeout.Stop()
+
+	c := client.NewHTTP(m.cfg.TestNetwork.Autodetect.SeedNode, "/websocket")
+	defer c.Stop() // nolint: errcheck
+	errCount := 0
+
+	for {
+		select {
+		// if a slave tries to connect while we're still trying to gather
+		// targets
+		case req := <-m.slavec:
+			req.errc <- &stillWaitingForTargets{}
+
+		case <-seedPollTicker.C:
+			err := m.querySeedForTargets(c)
+			if err != nil {
+				errCount++
+				m.logger.Debug("Failed to query seed node", "err", err, "errCount", errCount)
+				if errCount > defaultSeedPollMaxFailures {
+					return NewError(ErrMasterFailed, err, fmt.Sprintf("more than %d failures while attempting to query seed node for targets", defaultSeedPollMaxFailures))
+				}
+			}
+			if m.allTargetsPresent() {
+				m.logger.Info("Discovered all necessary targets for load testing", "count", m.cfg.TestNetwork.Autodetect.ExpectTargets)
+				m.logTargets()
+				return nil
+			}
+
+		case <-seedPollTimeout.C:
+			return NewError(
+				ErrMasterFailed,
+				nil,
+				fmt.Sprintf(
+					"failed to find %d target nodes within %s",
+					m.cfg.TestNetwork.Autodetect.ExpectTargets,
+					m.cfg.TestNetwork.Autodetect.ExpectTargetsWithin.Duration().String(),
+				),
+			)
+
+		case <-killCheckTicker.C:
+			if m.killed() {
+				return NewError(ErrMasterFailed, nil, "master killed")
+			}
+		}
+	}
+}
+
+func (m *Master) querySeedForTargets(c *client.HTTP) error {
+	info, err := c.NetInfo()
+	if err != nil {
+		return err
+	}
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	for _, peer := range info.Peers {
+		peerURL, err := url.Parse(peer.NodeInfo.Other.RPCAddress)
+		if err != nil {
+			m.logger.Debug("Unrecognized peer RPC address format", "rpcAddress", peer.NodeInfo.Other.RPCAddress, "err", err)
+			continue
+		}
+		m.targets[peer.RemoteIP] = TestNetworkTargetConfig{
+			ID:  peer.NodeInfo.Moniker,
+			URL: fmt.Sprintf("%s://%s:%s", peerURL.Scheme, peer.RemoteIP, peerURL.Port()),
+		}
+	}
+	m.logger.Debug("Got response from seed node", "targetCount", len(m.targets))
+	return nil
+}
+
+func (m *Master) allTargetsPresent() bool {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	return len(m.targets) >= m.cfg.TestNetwork.Autodetect.ExpectTargets
+}
+
+func (m *Master) logTargets() {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	i := 0
+	for _, target := range m.targets {
+		m.logger.Info(fmt.Sprintf("Target %d", i), "url", target.URL, "id", target.ID)
+		i++
+	}
+}
+
+func (m *Master) getTargets() []TestNetworkTargetConfig {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	targets := make([]TestNetworkTargetConfig, 0)
+	for _, target := range m.targets {
+		targets = append(targets, target)
+	}
+	return targets
 }
 
 func (m *Master) waitForSlaves() error {
@@ -382,13 +500,20 @@ func (m *Master) handleSlaveRequest(w http.ResponseWriter, r *http.Request) {
 	m.slavec <- req
 	err := <-req.errc
 	if err == nil {
+		if req.slave.State == slaveAccepted && m.cfg.TestNetwork.Autodetect.Enabled {
+			jsonResponse(w, testNetworkTargets{Targets: m.getTargets()}, http.StatusOK)
+			return
+		}
 		jsonResponse(w, "OK", http.StatusOK)
 		return
 	}
 
-	m.logger.Debug("Got error from slave request", "err", err)
+	m.logger.Debug("Result from slave request", "result", err)
 
 	switch err.(type) {
+	case *stillWaitingForTargets:
+		jsonResponse(w, "Still waiting for all Tendermint targets to become available", http.StatusNotModified)
+
 	case *stillWaitingForSlaves:
 		// facilitate the long polling wait until we're ready
 		id, readyc := m.registerReadySubscriber()
@@ -433,6 +558,10 @@ func (m *Master) unregisterReadySubscriber(id int) {
 }
 
 //-----------------------------------------------------------------------------
+
+func (e *stillWaitingForTargets) Error() string {
+	return "still waiting for required number of Tendermint peers"
+}
 
 func (e *stillWaitingForSlaves) Error() string {
 	return "still waiting for all slaves to connect"

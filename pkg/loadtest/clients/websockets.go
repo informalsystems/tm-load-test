@@ -125,30 +125,11 @@ func NewKVStoreWebSocketsClientType() *KVStoreWebSocketsClientType {
 }
 
 // NewFactory creates a new KVStoreWebSocketsFactory with the given parameters.
-func (t *KVStoreWebSocketsClientType) NewFactory(cfg Config, targets []string, id string) (Factory, error) {
-	// transform the targets to make sure they're WebSockets URLs
-	var wsTargets []string
-	for _, target := range targets {
-		u, err := url.Parse(target)
-		if err != nil {
-			return nil, err
-		}
-		switch u.Scheme {
-		case "http", "tcp":
-			u.Scheme = "ws"
-
-		case "https":
-			u.Scheme = "wss"
-		}
-		if len(u.Path) == 0 || u.Path == "/" {
-			u.Path = "/websocket"
-		}
-		wsTargets = append(wsTargets, u.String())
-	}
+func (t *KVStoreWebSocketsClientType) NewFactory(cfg Config, id string) (Factory, error) {
 	return &KVStoreWebSocketsFactory{
 		logger:  logging.NewLogrusLogger("client-factory"),
 		cfg:     cfg,
-		targets: wsTargets,
+		targets: make([]string, 0),
 		id:      id,
 		metrics: &KVStoreWebSocketsCombinedMetrics{
 			Clients: promauto.NewGauge(
@@ -165,6 +146,32 @@ func (t *KVStoreWebSocketsClientType) NewFactory(cfg Config, targets []string, i
 //
 // KVStoreWebSocketsFactory
 //
+
+// SetTargets transforms the given list of target URLs into ws:// or wss://
+// targets to ensure readiness for WebSockets-based testing.
+func (f *KVStoreWebSocketsFactory) SetTargets(targets []string) error {
+	// transform the targets to make sure they're WebSockets URLs
+	var wsTargets []string
+	for _, target := range targets {
+		u, err := url.Parse(target)
+		if err != nil {
+			return err
+		}
+		switch u.Scheme {
+		case "http", "tcp":
+			u.Scheme = "ws"
+
+		case "https":
+			u.Scheme = "wss"
+		}
+		if len(u.Path) == 0 || u.Path == "/" {
+			u.Path = "/websocket"
+		}
+		wsTargets = append(wsTargets, u.String())
+	}
+	f.targets = wsTargets
+	return nil
+}
 
 // NewClient instantiates a single WebSockets client to interact with a randomly
 // chosen Tendermint target node.

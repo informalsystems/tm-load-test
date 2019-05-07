@@ -45,7 +45,7 @@ wait_after_finished = "10s"
     [test_network.autodetect]
     # Set to true if you want the test network's nodes to be automatically
     # detected from a single Tendermint node. The master will poll the
-    # autodetect_seed_node for other peers to use as targets.
+    # seed_node for other peers to use as targets.
     enabled = false
 
     # If test_network.autodetect.enabled is set to true, this seed_node address

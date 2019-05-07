@@ -15,10 +15,18 @@ type remoteSlave struct {
 	Interactions int64      `json:"interactions"`
 }
 
-// resMessage is a generic way of representing a message string (either error or
-// otherwise).
+// resMessage is a generic way of representing a result message string (either
+// error or otherwise).
 type resMessage struct {
 	Message string `json:"message"`
+}
+
+// testNetworkTargets is a data structure returned by the master when a slave
+// attempts to register with the master when the list of targets is to be
+// obtained from a Tendermint peer node as opposed to a predefined list of
+// targets.
+type testNetworkTargets struct {
+	Targets []TestNetworkTargetConfig
 }
 
 func toJSON(msg interface{}) (string, error) {
