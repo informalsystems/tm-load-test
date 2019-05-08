@@ -69,13 +69,11 @@ spawn = 10
 spawn_rate = 10.0
 max_interactions = {{.MaxInteractions}}
 interaction_timeout = "11s"
-max_test_time = "10m"
+max_test_time = "{{.MaxTestTime}}"
 request_wait_min = "0ms"
 request_wait_max = "0ms"
 request_timeout = "5s"
 `
-
-const maxTestTime = 10 * time.Second
 
 type runResult struct {
 	summary *loadtest.Summary
@@ -86,6 +84,7 @@ type testConfig struct {
 	MasterAddr      string
 	RPCAddr         string
 	MaxInteractions int
+	MaxTestTime     string
 }
 
 type testCase struct {
@@ -102,7 +101,7 @@ type testCase struct {
 	expectedMinTestTime        time.Duration
 }
 
-func generateConfig(tpl string, maxInteractions int) (string, error) {
+func generateConfig(tpl string, maxInteractions int, maxTestTime string) (string, error) {
 	masterAddr, err := loadtest.ResolveBindAddr("127.0.0.1:")
 	if err != nil {
 		return "", err
@@ -113,6 +112,7 @@ func generateConfig(tpl string, maxInteractions int) (string, error) {
 		MasterAddr:      masterAddr,
 		RPCAddr:         rpctest.GetConfig().RPC.ListenAddress,
 		MaxInteractions: maxInteractions,
+		MaxTestTime:     maxTestTime,
 	}
 
 	var b strings.Builder
@@ -132,26 +132,37 @@ func init() {
 	logrus.SetLevel(logrus.DebugLevel)
 }
 
-func TestKVStoreHTTPIntegrationWithTendermintNode(t *testing.T) {
+func TestKVStoreHTTPIntegration(t *testing.T) {
 	runIntegrationTest(t, &testCase{
 		rawConfig:                  kvstoreHTTPConfig,
 		maxInteractions:            1,
+		maxTestTime:                time.Duration(time.Minute),
 		expectedMasterInteractions: 2 * 10 * 1, // no. of slaves * no. of clients * max interactions
 		expectedSlaveInteractions:  []int64{10, 10},
 	})
 }
 
-func TestKVStoreWebSocketsIntegrationWithTendermintNode(t *testing.T) {
+func TestKVStoreWebSocketsIntegration(t *testing.T) {
 	runIntegrationTest(t, &testCase{
 		rawConfig:                  kvstoreWebSocketsConfig,
 		maxInteractions:            1,
+		maxTestTime:                time.Duration(time.Minute),
 		expectedMasterInteractions: 2 * 10 * 1, // no. of slaves * no. of clients * max interactions
 		expectedSlaveInteractions:  []int64{10, 10},
+	})
+}
+
+func TestKVStoreWebSocketsIntegrationWithTimeLimit(t *testing.T) {
+	runIntegrationTest(t, &testCase{
+		rawConfig:           kvstoreWebSocketsConfig,
+		maxInteractions:     -1,
+		maxTestTime:         time.Duration(2 * time.Second),
+		expectedMinTestTime: time.Duration(2 * time.Second),
 	})
 }
 
 func runIntegrationTest(t *testing.T, tc *testCase) {
-	testCfg, err := generateConfig(tc.rawConfig, tc.maxInteractions)
+	testCfg, err := generateConfig(tc.rawConfig, tc.maxInteractions, tc.maxTestTime.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +194,8 @@ func waitAndAssertCorrect(t *testing.T, tc *testCase) {
 			}
 		}
 
-	case <-time.After(maxTestTime):
+	// We give the master an extra second's leeway here
+	case <-time.After(tc.maxTestTime + time.Second):
 		t.Error("maximum test time expired")
 	}
 	// get all slaves' results
@@ -199,7 +211,7 @@ func waitAndAssertCorrect(t *testing.T, tc *testCase) {
 				}
 			}
 
-		case <-time.After(maxTestTime):
+		case <-time.After(tc.maxTestTime):
 			t.Error("maximum test time expired")
 		}
 	}

@@ -87,10 +87,12 @@ func NewSlave(cfg *Config) (*Slave, error) {
 	}
 
 	maxInteractions := int64(cfg.Clients.Spawn) * int64(cfg.Clients.MaxInteractions)
-	if maxInteractions <= 0 {
-		return nil, fmt.Errorf("maximum number of interactions (clients.spawn * clients.max_interactions) must be greater than zero")
+	if cfg.Clients.MaxInteractions == -1 {
+		maxInteractions = -1
+		logger.Debug("Slave stop criteria", "maxTime", cfg.Clients.MaxTestTime.Duration().String())
+	} else {
+		logger.Debug("Slave stop criteria", "maxInteractions", maxInteractions)
 	}
-	logger.Debug("Slave stop criteria", "maxInteractions", maxInteractions)
 	return &Slave{
 		cfg:               cfg,
 		logger:            logger,
@@ -296,6 +298,34 @@ func (s *Slave) sendProgressToMaster() error {
 }
 
 func (s *Slave) logProgress() {
+	if s.cfg.Clients.MaxInteractions == -1 {
+		s.logTimeProgress()
+	} else {
+		s.logInteractionProgress()
+	}
+}
+
+func (s *Slave) logTimeProgress() {
+	interactions := s.getInteractions()
+	totalSeconds := s.timeSinceStart().Seconds()
+	expectedTestTime := s.cfg.Clients.MaxTestTime.Duration().Seconds()
+	progress := float64(0)
+	ips := float64(0)
+	if totalSeconds > 0 {
+		ips = float64(interactions) / totalSeconds
+		progress = float64(100) * totalSeconds / expectedTestTime
+	}
+	timeLeft := time.Duration(int64((expectedTestTime-totalSeconds)*1000)) * time.Millisecond
+	s.logger.Info(
+		"Progress",
+		"interactions", interactions,
+		"progress", fmt.Sprintf("%.1f%%", progress),
+		"interactionsPerSec", fmt.Sprintf("%.1f", ips),
+		"timeLeft", timeLeft.String(),
+	)
+}
+
+func (s *Slave) logInteractionProgress() {
 	interactions := s.getInteractions()
 	expectedInteractions := float64(s.getMaxInteractions())
 	progress := float64(100) * float64(interactions) / expectedInteractions
@@ -311,7 +341,7 @@ func (s *Slave) logProgress() {
 	}
 	timeLeft := time.Duration(int64(expectedTotalSeconds-totalSeconds)*1000) * time.Millisecond
 	s.logger.Info(
-		"Slave progress",
+		"Progress",
 		"interactions", interactions,
 		"progress", fmt.Sprintf("%.1f%%", progress),
 		"interactionsPerSec", fmt.Sprintf("%.1f", ips),
@@ -487,12 +517,16 @@ func (s *Slave) spawnClient(wg *sync.WaitGroup) {
 			return
 		}
 		defer c.OnShutdown()
+		count := 0
 	interactionLoop:
-		for i := 0; i < s.cfg.Clients.MaxInteractions; i++ {
-			c.Interact()
-			if s.mustKillClients() {
+		for {
+			if s.mustKillClients() || (s.cfg.Clients.MaxInteractions != -1 && count >= s.cfg.Clients.MaxInteractions) {
 				break interactionLoop
 			}
+
+			c.Interact()
+			count++
+
 			s.interactionsc <- 1
 		}
 	}()
