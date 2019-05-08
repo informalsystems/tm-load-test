@@ -1,8 +1,9 @@
 # Changelog
 
 ## v0.2.1
-* Allow clients to continuously send transactions until the maximum time limit
-  is reached without having a limit imposed on the number of transactions.
+* [\#10](https://github.com/interchainio/tm-load-test/pull/10) Allow clients
+  to continuously send transactions until the maximum time limit is reached
+  without having a limit imposed on the number of transactions.
 
 ## v0.2.0
 * First alpha release.
