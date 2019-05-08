@@ -198,6 +198,9 @@ func waitAndAssertCorrect(t *testing.T, tc *testCase) {
 					t.Errorf("expected %d interactions from slave %d, but got %d", tc.expectedSlaveInteractions[i], i, r.summary.Interactions)
 				}
 			}
+
+		case <-time.After(maxTestTime):
+			t.Error("maximum test time expired")
 		}
 	}
 	if tc.maxInteractions == -1 {
