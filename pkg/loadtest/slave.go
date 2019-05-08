@@ -89,9 +89,9 @@ func NewSlave(cfg *Config) (*Slave, error) {
 	maxInteractions := int64(cfg.Clients.Spawn) * int64(cfg.Clients.MaxInteractions)
 	if cfg.Clients.MaxInteractions == -1 {
 		maxInteractions = -1
-		logger.Debug("Slave stop criteria", "maxTime", cfg.Clients.MaxTestTime.Duration().String())
+		logger.Debug("Slave stop criterion", "maxTime", cfg.Clients.MaxTestTime.Duration().String())
 	} else {
-		logger.Debug("Slave stop criteria", "maxInteractions", maxInteractions)
+		logger.Debug("Slave stop criterion", "maxInteractions", maxInteractions)
 	}
 	return &Slave{
 		cfg:               cfg,
