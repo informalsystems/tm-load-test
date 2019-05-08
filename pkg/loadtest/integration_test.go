@@ -67,15 +67,13 @@ type = "kvstore-websockets"
 additional_params = ""
 spawn = 10
 spawn_rate = 10.0
-max_interactions = 1
+max_interactions = {{.MaxInteractions}}
 interaction_timeout = "11s"
-max_test_time = "10m"
+max_test_time = "{{.MaxTestTime}}"
 request_wait_min = "0ms"
 request_wait_max = "0ms"
 request_timeout = "5s"
 `
-
-const maxTestTime = 10 * time.Second
 
 type runResult struct {
 	summary *loadtest.Summary
@@ -83,11 +81,27 @@ type runResult struct {
 }
 
 type testConfig struct {
-	MasterAddr string
-	RPCAddr    string
+	MasterAddr      string
+	RPCAddr         string
+	MaxInteractions int
+	MaxTestTime     string
 }
 
-func generateConfig(tpl string) (string, error) {
+type testCase struct {
+	rawConfig       string
+	maxInteractions int
+	maxTestTime     time.Duration
+
+	startTime  time.Time
+	masterChan chan runResult
+	slaveChans []chan runResult
+
+	expectedMasterInteractions int64
+	expectedSlaveInteractions  []int64
+	expectedMinTestTime        time.Duration
+}
+
+func generateConfig(tpl string, maxInteractions int, maxTestTime string) (string, error) {
 	masterAddr, err := loadtest.ResolveBindAddr("127.0.0.1:")
 	if err != nil {
 		return "", err
@@ -95,8 +109,10 @@ func generateConfig(tpl string) (string, error) {
 
 	// get the Tendermint RPC address
 	testCfg := testConfig{
-		MasterAddr: masterAddr,
-		RPCAddr:    rpctest.GetConfig().RPC.ListenAddress,
+		MasterAddr:      masterAddr,
+		RPCAddr:         rpctest.GetConfig().RPC.ListenAddress,
+		MaxInteractions: maxInteractions,
+		MaxTestTime:     maxTestTime,
 	}
 
 	var b strings.Builder
@@ -116,16 +132,37 @@ func init() {
 	logrus.SetLevel(logrus.DebugLevel)
 }
 
-func TestKVStoreHTTPIntegrationWithTendermintNode(t *testing.T) {
-	runIntegrationTest(t, kvstoreHTTPConfig)
+func TestKVStoreHTTPIntegration(t *testing.T) {
+	runIntegrationTest(t, &testCase{
+		rawConfig:                  kvstoreHTTPConfig,
+		maxInteractions:            1,
+		maxTestTime:                time.Duration(time.Minute),
+		expectedMasterInteractions: 2 * 10 * 1, // no. of slaves * no. of clients * max interactions
+		expectedSlaveInteractions:  []int64{10, 10},
+	})
 }
 
-func TestKVStoreWebSocketsIntegrationWithTendermintNode(t *testing.T) {
-	runIntegrationTest(t, kvstoreWebSocketsConfig)
+func TestKVStoreWebSocketsIntegration(t *testing.T) {
+	runIntegrationTest(t, &testCase{
+		rawConfig:                  kvstoreWebSocketsConfig,
+		maxInteractions:            1,
+		maxTestTime:                time.Duration(time.Minute),
+		expectedMasterInteractions: 2 * 10 * 1, // no. of slaves * no. of clients * max interactions
+		expectedSlaveInteractions:  []int64{10, 10},
+	})
 }
 
-func runIntegrationTest(t *testing.T, rawConfig string) {
-	testCfg, err := generateConfig(rawConfig)
+func TestKVStoreWebSocketsIntegrationWithTimeLimit(t *testing.T) {
+	runIntegrationTest(t, &testCase{
+		rawConfig:           kvstoreWebSocketsConfig,
+		maxInteractions:     -1,
+		maxTestTime:         time.Duration(2 * time.Second),
+		expectedMinTestTime: time.Duration(2 * time.Second),
+	})
+}
+
+func runIntegrationTest(t *testing.T, tc *testCase) {
+	testCfg, err := generateConfig(tc.rawConfig, tc.maxInteractions, tc.maxTestTime.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,42 +173,52 @@ func runIntegrationTest(t *testing.T, rawConfig string) {
 		t.Fatal("Failed to parse integration test config.", err)
 	}
 
-	masterChan := spawnRunner(cfg, loadtest.RunMasterWithConfig)
-	slave1Chan := spawnRunner(cfg, loadtest.RunSlaveWithConfig)
-	slave2Chan := spawnRunner(cfg, loadtest.RunSlaveWithConfig)
+	tc.startTime = time.Now()
+	tc.masterChan = spawnRunner(cfg, loadtest.RunMasterWithConfig)
+	tc.slaveChans = make([]chan runResult, 2)
+	tc.slaveChans[0] = spawnRunner(cfg, loadtest.RunSlaveWithConfig)
+	tc.slaveChans[1] = spawnRunner(cfg, loadtest.RunSlaveWithConfig)
+	waitAndAssertCorrect(t, tc)
+}
 
-	// wait for load testing to successfully complete
-	for finished := 0; finished < 3; {
+func waitAndAssertCorrect(t *testing.T, tc *testCase) {
+	// get the master's results
+	select {
+	case r := <-tc.masterChan:
+		if r.err != nil {
+			t.Error(r.err)
+		}
+		if tc.maxInteractions > -1 {
+			if r.summary.Interactions != tc.expectedMasterInteractions {
+				t.Errorf("expected %d interactions from master, but got %d", tc.expectedMasterInteractions, r.summary.Interactions)
+			}
+		}
+
+	// We give the master an extra second's leeway here
+	case <-time.After(tc.maxTestTime + time.Second):
+		t.Error("maximum test time expired")
+	}
+	// get all slaves' results
+	for i, slavec := range tc.slaveChans {
 		select {
-		case r := <-masterChan:
-			finished++
+		case r := <-slavec:
 			if r.err != nil {
 				t.Error(r.err)
 			}
-			if r.summary.Interactions != 20 {
-				t.Errorf("expected 20 interactions from master, but got %d", r.summary.Interactions)
+			if tc.maxInteractions > -1 {
+				if r.summary.Interactions != tc.expectedSlaveInteractions[i] {
+					t.Errorf("expected %d interactions from slave %d, but got %d", tc.expectedSlaveInteractions[i], i, r.summary.Interactions)
+				}
 			}
 
-		case r := <-slave1Chan:
-			finished++
-			if r.err != nil {
-				t.Error(r.err)
-			}
-			if r.summary.Interactions != 10 {
-				t.Errorf("expected 10 interactions from slave 1, but got %d", r.summary.Interactions)
-			}
-
-		case r := <-slave2Chan:
-			finished++
-			if r.err != nil {
-				t.Error(r.err)
-			}
-			if r.summary.Interactions != 10 {
-				t.Errorf("expected 10 interactions from slave 2, but got %d", r.summary.Interactions)
-			}
-
-		case <-time.After(maxTestTime):
-			t.Fatal("Maximum test time expired")
+		case <-time.After(tc.maxTestTime):
+			t.Error("maximum test time expired")
+		}
+	}
+	if tc.maxInteractions == -1 {
+		testTime := time.Since(tc.startTime)
+		if testTime < tc.maxTestTime {
+			t.Errorf("expected test to take a minimum of %s, but took %s", tc.startTime.String(), testTime.String())
 		}
 	}
 }

@@ -65,8 +65,11 @@ func NewMaster(cfg *Config) (*Master, error) {
 		slavec:               make(chan slaveRequest, cfg.Master.ExpectSlaves),
 		targets:              make(map[string]TestNetworkTargetConfig),
 	}
-	if m.expectedInteractions <= 0 {
-		return nil, NewError(ErrInvalidConfig, nil, "total expected interactions must be greater than 0")
+	if cfg.Clients.MaxInteractions == -1 {
+		m.expectedInteractions = -1
+	}
+	if m.expectedInteractions < -1 {
+		return nil, NewError(ErrInvalidConfig, nil, "total expected interactions must be -1 or greater than or equal to 0")
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
@@ -294,6 +297,34 @@ func (m *Master) doLoadTest() error {
 }
 
 func (m *Master) logProgress() {
+	if m.cfg.Clients.MaxInteractions == -1 {
+		m.logTimeProgress()
+	} else {
+		m.logInteractionProgress()
+	}
+}
+
+func (m *Master) logTimeProgress() {
+	interactions := m.countInteractions()
+	totalSeconds := m.timeSinceStart().Seconds()
+	expectedTestTime := m.cfg.Clients.MaxTestTime.Duration().Seconds()
+	progress := float64(0)
+	ips := float64(0)
+	if totalSeconds > 0 {
+		ips = float64(interactions) / totalSeconds
+		progress = float64(100) * totalSeconds / expectedTestTime
+	}
+	timeLeft := time.Duration(int64((expectedTestTime-totalSeconds)*1000)) * time.Millisecond
+	m.logger.Info(
+		"Progress",
+		"interactions", interactions,
+		"progress", fmt.Sprintf("%.1f%%", progress),
+		"interactionsPerSec", fmt.Sprintf("%.1f", ips),
+		"timeLeft", timeLeft.String(),
+	)
+}
+
+func (m *Master) logInteractionProgress() {
 	interactions := m.countInteractions()
 	expectedInteractions := float64(m.getExpectedInteractions())
 	progress := float64(100) * float64(interactions) / expectedInteractions
@@ -309,7 +340,7 @@ func (m *Master) logProgress() {
 	}
 	timeLeft := time.Duration(int64(expectedTotalSeconds-totalSeconds)*1000) * time.Millisecond
 	m.logger.Info(
-		"Load testing progress",
+		"Progress",
 		"interactions", interactions,
 		"progress", fmt.Sprintf("%.1f%%", progress),
 		"interactionsPerSec", fmt.Sprintf("%.1f", ips),
