@@ -2,6 +2,14 @@
 # The host IP/port to which to bind the master
 bind = "127.0.0.1:35000"
 
+    [master.auth]
+    # Is basic HTTP authentication enabled when attempting to access the master?
+    enabled = false
+    # Username to use in basic HTTP authentication.
+    username = "loadtestuser"
+    # The bcrypt hash of the password required to validate slaves.
+    password_hash = "$2a$12$.pR8I4VZttp2PoemVDvxbuDRpj25svTxa6NL2oVMazGGjq5S4vOum"
+
 # How many slaves to expect to connect before starting the load test
 expect_slaves = 2
 
@@ -20,9 +28,8 @@ wait_after_finished = "10s"
 # pick a random port.
 bind = "127.0.0.1:"
 
-# IP address and port through which to reach the master (could be different
-# from the bind address above, e.g. if the master is bound to 0.0.0.0:35000,
-# we still need an external address through which to access the master).
+# HTTP address by which the master can be reached. If the master requires
+# authentication, include the username:password in the URL below.
 master = "http://127.0.0.1:35000"
 
 # How long to keep polling for the master before considering the master to have

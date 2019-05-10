@@ -109,11 +109,11 @@ func longPoll(req *http.Request, singlePollTimeout, overallTimeout time.Duration
 	lastPoll := startTime
 	attempt := 0
 	for {
-		logger.Debug("Sending request", "attempt", attempt)
+		logger.Debug("Sending request", "attempt", attempt, "method", req.Method)
 		res, err := client.Do(req)
 		if err == nil {
 			defer res.Body.Close()
-			logger.Debug("Got response", "code", res.StatusCode)
+			logger.Debug("Got response", "code", res.StatusCode, "attempt", attempt)
 			if res.StatusCode == 200 {
 				body, err := ioutil.ReadAll(res.Body)
 				if err != nil {
@@ -121,11 +121,11 @@ func longPoll(req *http.Request, singlePollTimeout, overallTimeout time.Duration
 				}
 				// all's good
 				return body, nil
-			} else if res.StatusCode >= 400 {
-				return nil, fmt.Errorf("request failed with status code %d", res.StatusCode)
-			} else {
-				logger.Debug("Server not ready yet")
 			}
+			if res.StatusCode >= 400 {
+				return nil, fmt.Errorf("request failed with status code %d", res.StatusCode)
+			}
+			logger.Debug("Server not ready yet")
 		} else {
 			logger.Debug("Failed to send request, will try again", "err", err)
 			if time.Since(startTime) >= overallTimeout {

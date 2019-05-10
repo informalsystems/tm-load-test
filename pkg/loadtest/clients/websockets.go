@@ -49,8 +49,7 @@ type KVStoreWebSocketsClient struct {
 	recvc     chan interface{}
 	sendc     chan interface{}
 
-	recvLoopStoppedc chan struct{}
-	sendLoopStoppedc chan struct{}
+	sendAndRecvLoopStopped chan struct{}
 }
 
 // KVStoreWebSocketsMetrics keeps track of interaction- or request-related
@@ -177,14 +176,13 @@ func (f *KVStoreWebSocketsFactory) SetTargets(targets []string) error {
 // chosen Tendermint target node.
 func (f *KVStoreWebSocketsFactory) NewClient() Client {
 	return &KVStoreWebSocketsClient{
-		factory:          f,
-		target:           f.targets[rand.Int()%len(f.targets)],
-		id:               "loadtest-" + cmn.RandStr(8),
-		recvCtrlc:        make(chan bool, 1),
-		sendc:            make(chan interface{}, 1),
-		recvc:            make(chan interface{}, 1),
-		sendLoopStoppedc: make(chan struct{}),
-		recvLoopStoppedc: make(chan struct{}),
+		factory:                f,
+		target:                 f.targets[rand.Int()%len(f.targets)],
+		id:                     "loadtest-" + cmn.RandStr(8),
+		recvCtrlc:              make(chan bool, 1),
+		sendc:                  make(chan interface{}, 1),
+		recvc:                  make(chan interface{}, 1),
+		sendAndRecvLoopStopped: make(chan struct{}),
 	}
 }
 
@@ -212,8 +210,7 @@ func (c *KVStoreWebSocketsClient) OnStartup() error {
 		}
 		return err
 	})
-	go c.recvLoop()
-	go c.sendLoop()
+	go c.sendAndRecvLoop()
 	c.factory.metrics.Clients.Inc()
 
 	if err = c.subscribeToTxs(); err != nil {
@@ -236,10 +233,11 @@ func (c *KVStoreWebSocketsClient) subscribeToTxs() error {
 	return err
 }
 
-func (c *KVStoreWebSocketsClient) recvLoop() {
-	defer close(c.recvLoopStoppedc)
+func (c *KVStoreWebSocketsClient) sendAndRecvLoop() {
+	defer close(c.sendAndRecvLoopStopped)
 	stopCheckTicker := time.NewTicker(100 * time.Millisecond)
 	defer stopCheckTicker.Stop()
+loop:
 	for {
 		select {
 		case <-c.recvCtrlc:
@@ -257,21 +255,6 @@ func (c *KVStoreWebSocketsClient) recvLoop() {
 			}
 			c.recvc <- res
 
-		case <-stopCheckTicker.C:
-			if c.mustStop() {
-				return
-			}
-		}
-	}
-}
-
-func (c *KVStoreWebSocketsClient) sendLoop() {
-	defer close(c.sendLoopStoppedc)
-	stopCheckTicker := time.NewTicker(100 * time.Millisecond)
-	defer stopCheckTicker.Stop()
-loop:
-	for {
-		select {
 		case msg := <-c.sendc:
 			c.conn.SetWriteDeadline(time.Now().Add(c.factory.cfg.RequestTimeout.Duration())) // nolint: errcheck
 			if err := c.conn.WriteJSON(msg); err != nil {
@@ -303,8 +286,7 @@ func (c *KVStoreWebSocketsClient) mustStop() bool {
 }
 
 func (c *KVStoreWebSocketsClient) waitUntilStopped() {
-	<-c.sendLoopStoppedc
-	<-c.recvLoopStoppedc
+	<-c.sendAndRecvLoopStopped
 }
 
 // Interact attempts to send a value to the kvstore to be stored, and then
@@ -424,6 +406,13 @@ func (c *KVStoreWebSocketsClient) unsubscribeFromTxs() error {
 }
 
 func (c *KVStoreWebSocketsClient) shutdown() {
+	c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")) // nolint: errcheck
+	// trigger a final read from the WebSockets endpoint
+	c.recvCtrlc <- true
+	// wait for the server to close the connection
+	time.Sleep(time.Second)
+	c.conn.Close() // nolint: errcheck
+
 	c.stop()
 	c.waitUntilStopped()
 	c.factory.metrics.Clients.Dec()

@@ -1,8 +1,10 @@
 package loadtest
 
 import (
+	"encoding"
 	"fmt"
 	"io/ioutil"
+	"net/url"
 	"time"
 
 	"github.com/interchainio/tm-load-test/pkg/loadtest/clients"
@@ -38,15 +40,24 @@ type Config struct {
 // MasterConfig provides the configuration for the load testing master.
 type MasterConfig struct {
 	Bind               string                      `toml:"bind"`                          // The address to which to bind the master (host:port).
+	Auth               MasterAuthConfig            `toml:"auth"`                          // Authentication configuration for the master.
 	ExpectSlaves       int                         `toml:"expect_slaves"`                 // The number of slaves to expect to connect before starting the load test.
 	ExpectSlavesWithin timeutils.ParseableDuration `toml:"expect_slaves_within"`          // The time period within which to expect to hear from all slaves, otherwise causes a failure.
 	WaitAfterFinished  timeutils.ParseableDuration `toml:"wait_after_finished,omitempty"` // A time period to wait after successful completion of the load testing before completely shutting the master down.
 }
 
+// MasterAuthConfig encapsulates authentication configuration for the load
+// testing master node.
+type MasterAuthConfig struct {
+	Enabled      bool   `toml:"enabled"`       // Is basic HTTP authentication enabled?
+	Username     string `toml:"username"`      // The username for accessing the master, if enabled.
+	PasswordHash string `toml:"password_hash"` // The bcrypt hash of the password for accessing the master, if enabled.
+}
+
 // SlaveConfig provides configuration specific to the load testing slaves.
 type SlaveConfig struct {
 	Bind               string                      `toml:"bind"`   // The address to which to bind slave nodes (host:port).
-	Master             string                      `toml:"master"` // The master's external address (host:port).
+	Master             ParseableURL                `toml:"master"` // The master's external address (URL).
 	ExpectMasterWithin timeutils.ParseableDuration `toml:"expect_master_within"`
 	ExpectStartWithin  timeutils.ParseableDuration `toml:"expect_start_within"`
 	WaitAfterFinished  timeutils.ParseableDuration `toml:"wait_after_finished,omitempty"` // A time period to wait after successful completion of the load testing before completely shutting the slave down.
@@ -62,7 +73,7 @@ type TestNetworkConfig struct {
 // autodetection of the Tendermint test network nodes under test.
 type TestNetworkAutodetectConfig struct {
 	Enabled             bool                        `toml:"enabled"`        // Is target network autodetection enabled?
-	SeedNode            string                      `toml:"seed_node"`      // The seed node from which to find other peers/targets.
+	SeedNode            ParseableURL                `toml:"seed_node"`      // The seed node from which to find other peers/targets.
 	ExpectTargets       int                         `toml:"expect_targets"` // The number of targets to expect prior to starting load testing.
 	ExpectTargetsWithin timeutils.ParseableDuration `toml:"expect_targets_within"`
 	TargetSeedNode      bool                        `toml:"target_seed_node"` // Whether or not to include the seed node itself in load testing.
@@ -142,7 +153,7 @@ func (s *SlaveConfig) Validate() error {
 	if len(s.Bind) == 0 {
 		return NewError(ErrInvalidConfig, nil, "slave needs non-empty bind address")
 	}
-	if len(s.Master) == 0 {
+	if len(s.Master.String()) == 0 {
 		return NewError(ErrInvalidConfig, nil, "slave address for master must be explicitly specified")
 	}
 	return nil
@@ -178,7 +189,7 @@ func (c *TestNetworkAutodetectConfig) Validate() error {
 	if !c.Enabled {
 		return nil
 	}
-	if len(c.SeedNode) == 0 {
+	if len(c.SeedNode.String()) == 0 {
 		return NewError(ErrInvalidConfig, nil, "test network autodetection requires a seed node address, but none provided")
 	}
 	if c.ExpectTargets <= 0 {
@@ -209,4 +220,32 @@ func (c *TestNetworkTargetConfig) Validate(i int) error {
 		return NewError(ErrInvalidConfig, nil, fmt.Sprintf("test network target %d is missing its RPC URL", i))
 	}
 	return nil
+}
+
+//-----------------------------------------------------------------------------
+
+// ParseableURL is a URL that we can parse from the configuration.
+type ParseableURL url.URL
+
+var _ encoding.TextUnmarshaler = (*ParseableURL)(nil)
+var _ encoding.TextMarshaler = (*ParseableURL)(nil)
+
+// UnmarshalText allows ParseableURL to implement encoding.TextUnmarshaler.
+func (p *ParseableURL) UnmarshalText(text []byte) error {
+	u, err := url.Parse(string(text))
+	if err == nil {
+		*p = ParseableURL(*u)
+	}
+	return err
+}
+
+// MarshalText converts the URL into a string.
+func (p *ParseableURL) MarshalText() (text []byte, err error) {
+	text = []byte(p.String())
+	return
+}
+
+func (p *ParseableURL) String() string {
+	u := url.URL(*p)
+	return u.String()
 }

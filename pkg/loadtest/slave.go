@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +37,7 @@ const DefaultSlaveKillCheckInterval = 1 * time.Second
 type slaveState string
 
 const (
+	slaveCreated  slaveState = "created"
 	slaveAccepted slaveState = "accepted"
 	slaveTesting  slaveState = "testing"
 	slaveFinished slaveState = "finished"
@@ -55,13 +58,16 @@ type Slave struct {
 
 	prometheus *baseServer
 
-	mtx             sync.Mutex
-	id              string
-	flagKill        bool                      // Set to true when the slave must be killed.
-	flagKillClients bool                      // Set to true when the clients must be killed (doesn't necessarily mean the slave must be killed).
-	startTime       time.Time                 // When the testing was started.
-	interactions    int64                     // A count of all of the interactions executed so far.
-	targets         []TestNetworkTargetConfig // Targets for when autodetection is enabled.
+	mtx                     sync.Mutex
+	id                      string
+	state                   slaveState                // For keeping track of our current state.
+	flagKill                bool                      // Set to true when the slave must be killed.
+	flagKillClients         bool                      // Set to true when the clients must be killed (doesn't necessarily mean the slave must be killed).
+	startTime               time.Time                 // When the testing was started.
+	interactions            int64                     // A count of all of the interactions executed so far.
+	targets                 []TestNetworkTargetConfig // Targets for when autodetection is enabled.
+	userInfo                *url.Userinfo             // For authenticating the slave against the master.
+	lastProgressUpdateCount int64                     // To make sure we don't send through duplicate progress updates.
 }
 
 // NewSlave will instantiate a new slave node with the given configuration.
@@ -93,15 +99,30 @@ func NewSlave(cfg *Config) (*Slave, error) {
 	} else {
 		logger.Debug("Slave stop criterion", "maxInteractions", maxInteractions)
 	}
+	var userInfo *url.Userinfo
+	if cfg.Master.Auth.Enabled {
+		userInfo = cfg.Slave.Master.User
+		if userInfo == nil || len(userInfo.String()) == 0 {
+			// try to extract the user info from environment variables
+			username := os.Getenv("TMLOADTEST_MASTER_USERNAME")
+			password := os.Getenv("TMLOADTEST_MASTER_PASSWORD")
+			if len(username) == 0 || len(password) == 0 {
+				return nil, NewError(ErrSlaveFailed, nil, "missing username/password for master authentication")
+			}
+			userInfo = url.UserPassword(username, password)
+		}
+	}
 	return &Slave{
 		cfg:               cfg,
 		logger:            logger,
 		id:                slaveID,
+		state:             slaveCreated,
 		clientFactory:     clientFactory,
 		maxInteractions:   maxInteractions,
 		interactionsc:     make(chan int64, cfg.Clients.Spawn),
 		interactionsStopc: make(chan struct{}),
 		prometheus:        prometheus,
+		userInfo:          userInfo,
 	}, err
 }
 
@@ -206,6 +227,38 @@ func (s *Slave) setTargets(targets []TestNetworkTargetConfig) {
 	s.targets = targets
 }
 
+func (s *Slave) getAuthCreds() (username, password string) {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	username = s.userInfo.Username()
+	password, _ = s.userInfo.Password()
+	return
+}
+
+func (s *Slave) getLastProgressUpdateCount() int64 {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	return s.lastProgressUpdateCount
+}
+
+func (s *Slave) setLastProgressUpdateCount(count int64) {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	s.lastProgressUpdateCount = count
+}
+
+func (s *Slave) getState() slaveState {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	return s.state
+}
+
+func (s *Slave) setState(state slaveState) {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	s.state = state
+}
+
 // Runs the overall load testing operation, keeping track of the state as it
 // goes.
 func (s *Slave) run() error {
@@ -243,57 +296,96 @@ func (s *Slave) failAndUpdateStateWithMaster(err error) error {
 	return err
 }
 
+func (s *Slave) buildMasterRequest(rs *remoteSlave) (*http.Request, error) {
+	// tell the master we want to set the state for this slave
+	msg, err := toJSON(rs)
+	if err != nil {
+		return nil, NewError(ErrSlaveFailed, err, "failed to marshal JSON message")
+	}
+	reqURL, err := url.Parse(s.cfg.Slave.Master.String())
+	if err != nil {
+		return nil, err
+	}
+	reqURL.User = nil
+	reqURL.Path = "/slave"
+	req, err := http.NewRequest("POST", reqURL.String(), strings.NewReader(msg))
+	if err != nil {
+		return nil, NewError(ErrSlaveFailed, err, "failed to construct request")
+	}
+	if s.cfg.Master.Auth.Enabled {
+		username, password := s.getAuthCreds()
+		req.SetBasicAuth(username, password)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return req, nil
+}
+
 // Does long polling to try to eventually convince the master to change the
 // state of this slave.
 func (s *Slave) updateStateWithMaster(state slaveState, status string) ([]byte, error) {
+	oldState := s.getState()
+	// no need to tell the master
+	if oldState == slaveFinished || oldState == slaveFailed || state == oldState {
+		return []byte{}, nil
+	}
+
+	// we set the state in the beginning in case of any other competing calls to
+	// updateStateWithMaster()
+	s.setState(state)
+
 	rs := remoteSlave{
 		ID:           s.getID(),
 		State:        state,
 		Status:       status,
 		Interactions: s.getInteractions(),
 	}
-	// tell the master we want to set the state for this slave
-	msg, err := toJSON(&rs)
+	req, err := s.buildMasterRequest(&rs)
 	if err != nil {
-		return nil, NewError(ErrSlaveFailed, err, "failed to marshal JSON message")
+		// revert
+		s.setState(oldState)
+		return nil, err
 	}
-
-	reqURL := fmt.Sprintf("%s/slave", s.cfg.Slave.Master)
-	s.logger.Debug("Long polling master", "url", reqURL, "state", rs.State, "interactions", rs.Interactions)
-	req, err := http.NewRequest("POST", reqURL, strings.NewReader(msg))
-	if err != nil {
-		return nil, NewError(ErrSlaveFailed, err, "failed to construct request")
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	return longPoll(
+	res, err := longPoll(
 		req,
 		DefaultSlaveLongPollTimeout,
 		s.cfg.Slave.ExpectMasterWithin.Duration(),
 		s.mustKill,
 		s.logger,
 	)
+	if err != nil {
+		// revert
+		s.setState(oldState)
+		return nil, err
+	}
+	return res, nil
 }
 
 // Send an update to the master to tell it how far this slave is with its load
 // testing. Doesn't do any long polling.
 func (s *Slave) sendProgressToMaster() error {
-	s.logProgress()
 	interactionCount := s.getInteractions()
-	msg, err := toJSON(remoteSlave{ID: s.getID(), State: slaveTesting, Interactions: interactionCount})
-	if err != nil {
-		return fmt.Errorf("failed to marshal slave update message: %v", err)
+	// no need for another update
+	if s.getLastProgressUpdateCount() == interactionCount {
+		s.logger.Debug("Duplicate progress update", "interactionCount", interactionCount)
+		return nil
 	}
-	reqURL := fmt.Sprintf("%s/slave", s.cfg.Slave.Master)
+	s.logProgress()
+	req, err := s.buildMasterRequest(&remoteSlave{ID: s.getID(), State: slaveTesting, Interactions: interactionCount})
+	if err != nil {
+		return err
+	}
 	client := &http.Client{
 		Timeout: DefaultSlaveUpdateTimeout,
 	}
-	res, err := client.Post(reqURL, "application/json", strings.NewReader(msg))
+	res, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to POST slave update message: %v", err)
-	} else if res.StatusCode != 200 {
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
 		return fmt.Errorf("got unexpected status code from master: %d", res.StatusCode)
 	}
+	s.setLastProgressUpdateCount(interactionCount)
 	return nil
 }
 
@@ -307,6 +399,9 @@ func (s *Slave) logProgress() {
 
 func (s *Slave) logTimeProgress() {
 	interactions := s.getInteractions()
+	if interactions == 0 {
+		return
+	}
 	totalSeconds := s.timeSinceStart().Seconds()
 	expectedTestTime := s.cfg.Clients.MaxTestTime.Duration().Seconds()
 	progress := float64(0)
@@ -327,6 +422,9 @@ func (s *Slave) logTimeProgress() {
 
 func (s *Slave) logInteractionProgress() {
 	interactions := s.getInteractions()
+	if interactions == 0 {
+		return
+	}
 	expectedInteractions := float64(s.getMaxInteractions())
 	progress := float64(100) * float64(interactions) / expectedInteractions
 	totalSeconds := s.timeSinceStart().Seconds()
@@ -535,7 +633,6 @@ func (s *Slave) spawnClient(wg *sync.WaitGroup) {
 func (s *Slave) countInteractions() {
 	updateTicker := time.NewTicker(DefaultHealthCheckInterval)
 	defer updateTicker.Stop()
-loop:
 	for {
 		select {
 		case <-updateTicker.C:
@@ -545,7 +642,7 @@ loop:
 			s.addInteractions(c)
 
 		case <-s.interactionsStopc:
-			break loop
+			return
 		}
 	}
 }

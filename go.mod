@@ -19,7 +19,7 @@ require (
 	github.com/syndtr/goleveldb v1.0.0 // indirect
 	github.com/tendermint/go-amino v0.14.1 // indirect
 	github.com/tendermint/tendermint v0.31.3
-	golang.org/x/crypto v0.0.0-20190411191339-88737f569e3a // indirect
+	golang.org/x/crypto v0.0.0-20190411191339-88737f569e3a
 	golang.org/x/net v0.0.0-20190404232315-eb5bcb51f2a3 // indirect
 	golang.org/x/sys v0.0.0-20190411185658-b44545bcd369 // indirect
 	golang.org/x/tools v0.0.0-20190411180116-681f9ce8ac52 // indirect
