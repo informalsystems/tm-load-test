@@ -1,6 +1,8 @@
 # Changelog
 
-## v0.2.1
+## v0.3.0
+* [\#12](https://github.com/interchainio/tm-load-test/pull/12) Add standalone
+  mode to be able to run load testing tool locally in a simple way.
 * [\#11](https://github.com/interchainio/tm-load-test/pull/11) Allow for basic
   HTTP authentication between the master and slave nodes for additional
   security.
