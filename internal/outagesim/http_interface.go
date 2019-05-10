@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func respond(w http.ResponseWriter, code int, msg string) {
@@ -39,27 +41,51 @@ func tendermintDown(w http.ResponseWriter, isTendermintRunningFn func() bool, ex
 // incoming up/down requests to bring the Tendermint service up or down. Sending
 // a POST request to the server with either "up" or "down" in the body of the
 // request will attempt to bring the Tendermint service up or down accordingly.
-func MakeOutageEndpointHandler(isTendermintRunningFn func() bool, executeServiceCmdFn func(string) error) func(http.ResponseWriter, *http.Request) {
+func MakeOutageEndpointHandler(
+	username, passwordHash string,
+	isTendermintRunningFn func() bool,
+	executeServiceCmdFn func(string) error,
+) func(http.ResponseWriter, *http.Request) {
+
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" {
-			if r.Body != nil {
-				body, err := ioutil.ReadAll(r.Body)
-				if err != nil {
-					respond(w, http.StatusInternalServerError, "Internal server error while reading request body")
-				}
-				switch string(body) {
-				case "up":
-					tendermintUp(w, isTendermintRunningFn, executeServiceCmdFn)
-				case "down":
-					tendermintDown(w, isTendermintRunningFn, executeServiceCmdFn)
-				default:
-					respond(w, http.StatusBadRequest, "Unrecognised command")
-				}
-			} else {
-				respond(w, http.StatusBadRequest, "Missing command in request")
-			}
-		} else {
+		if r.Method != "POST" {
 			respond(w, http.StatusMethodNotAllowed, "Unsupported method")
+			return
+		}
+		if r.Body == nil {
+			respond(w, http.StatusBadRequest, "Missing command in request")
+			return
+		}
+		if err := authenticate(r, username, passwordHash); err != nil {
+			respond(w, http.StatusUnauthorized, fmt.Sprintf("Error: %v", err))
+			return
+		}
+		body, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			respond(w, http.StatusInternalServerError, "Internal server error while reading request body")
+			return
+		}
+		switch string(body) {
+		case "up":
+			tendermintUp(w, isTendermintRunningFn, executeServiceCmdFn)
+		case "down":
+			tendermintDown(w, isTendermintRunningFn, executeServiceCmdFn)
+		default:
+			respond(w, http.StatusBadRequest, "Unrecognised command")
 		}
 	}
+}
+
+func authenticate(req *http.Request, username, passwordHash string) error {
+	u, p, ok := req.BasicAuth()
+	if !ok {
+		return fmt.Errorf("missing username and/or password in request")
+	}
+	if u != username {
+		return fmt.Errorf("invalid username and/or password")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(p)); err != nil {
+		return fmt.Errorf("invalid username and/or password")
+	}
+	return nil
 }
