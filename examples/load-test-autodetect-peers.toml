@@ -2,16 +2,6 @@
 # The host IP/port to which to bind the master
 bind = "127.0.0.1:35000"
 
-    [master.auth]
-    # Is basic HTTP authentication enabled when attempting to access the master?
-    enabled = false
-    # Username to use in basic HTTP authentication.
-    username = "loadtestuser"
-    # The bcrypt hash of the password required to validate slaves. NOTE: Try not
-    # to use bcrypt cost factors above 8 - this slows down progress updates to
-    # the master significantly. 
-    password_hash = "$2a$08$rd8XKT/IO1a7MqcobrGX0epg05Z6/fEPopygo9G6yWuq4xLz8uhxq"
-
 # How many slaves to expect to connect before starting the load test
 expect_slaves = 2
 
@@ -24,6 +14,16 @@ expect_slaves_within = "1m"
 # for external polling of the Prometheus stats endpoint after successful
 # completion of testing for a while.
 wait_after_finished = "10s"
+
+    [master.auth]
+    # Is basic HTTP authentication enabled when attempting to access the master?
+    enabled = false
+    # Username to use in basic HTTP authentication.
+    username = "loadtestuser"
+    # The bcrypt hash of the password required to validate slaves. NOTE: Try not
+    # to use bcrypt cost factors above 8 - this slows down progress updates to
+    # the master significantly. 
+    password_hash = "$2a$08$rd8XKT/IO1a7MqcobrGX0epg05Z6/fEPopygo9G6yWuq4xLz8uhxq"
 
 [slave]
 # The IP address/port to which to bind the slave node. Leave out the port to

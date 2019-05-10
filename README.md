@@ -39,9 +39,9 @@ tendermint node --proxy_app kvstore
 
 # Run each of the following in a separate terminal (-v sets output logging to
 # DEBUG level)
-./build/tm-load-test -c examples/load-test.toml -master -v
-./build/tm-load-test -c examples/load-test.toml -slave -v
-./build/tm-load-test -c examples/load-test.toml -slave -v
+./build/tm-load-test -c examples/load-test.toml -mode master -v
+./build/tm-load-test -c examples/load-test.toml -mode slave -v
+./build/tm-load-test -c examples/load-test.toml -mode slave -v
 ```
 
 And then watch the output logs to see the load testing progress.
@@ -90,8 +90,3 @@ make lint
 make test
 ```
 
-## Scripts
-`tm-load-test` is tedious to use across many machines without some form of
-automation, so to help along those lines there are
-[Ansible](https://docs.ansible.com/ansible/latest/index.html) scripts in the
-[`scripts/load-testing`](./scripts/load-testing/README.md) folder.
