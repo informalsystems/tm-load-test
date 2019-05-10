@@ -19,8 +19,28 @@ make
 ```
 
 ## Usage
-There are example load testing configuration files in the `examples` folder. The
-`load-test.toml` example demonstrates usage with the following configuration:
+
+`tm-load-test` requires the use of a TOML-based configuration file to execute a
+load test. See the [examples](./examples/) folder for some examples, where the
+comments in each example explain what each parameter means.
+
+This application can operate in either **standalone**, or **master/slave** mode.
+
+### Standalone Mode
+By default, `tm-load-test` is a distributed load testing tool, but to run a load
+test locally (which internally creates a single master and slave node, ignoring
+the `master.expect_slaves` and `slave.master` parameters in your configuration
+file):
+
+```bash
+# Run the load test in standalone mode with the given configuration (-v sets
+# output logging to DEBUG level)
+./build/tm-load-test -c examples/load-test.toml -mode standalone -v
+```
+
+### Master/Slave Mode
+The [`load-test.toml`](./examples/load-test.toml) example demonstrates usage
+with the following configuration:
 
 * A single Tendermint node with RPC endpoint available at `localhost:26657`
 * The load testing master bound to `localhost:35000`
