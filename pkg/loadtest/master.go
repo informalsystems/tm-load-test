@@ -11,6 +11,7 @@ import (
 	"github.com/interchainio/tm-load-test/internal/logging"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/tendermint/tendermint/rpc/client"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // The maximum number of failures to tolerate when attempting to query for peers
@@ -128,7 +129,7 @@ func (m *Master) pollForTargets() error {
 	seedPollTimeout := time.NewTicker(m.cfg.TestNetwork.Autodetect.ExpectTargetsWithin.Duration())
 	defer seedPollTimeout.Stop()
 
-	c := client.NewHTTP(m.cfg.TestNetwork.Autodetect.SeedNode, "/websocket")
+	c := client.NewHTTP(m.cfg.TestNetwork.Autodetect.SeedNode.String(), "/websocket")
 	defer c.Stop() // nolint: errcheck
 	errCount := 0
 
@@ -192,9 +193,9 @@ func (m *Master) querySeedForTargets(c *client.HTTP) error {
 		}
 	}
 	if m.cfg.TestNetwork.Autodetect.TargetSeedNode {
-		m.targets[m.cfg.TestNetwork.Autodetect.SeedNode] = TestNetworkTargetConfig{
+		m.targets[m.cfg.TestNetwork.Autodetect.SeedNode.String()] = TestNetworkTargetConfig{
 			ID:  "seed_node",
-			URL: m.cfg.TestNetwork.Autodetect.SeedNode,
+			URL: m.cfg.TestNetwork.Autodetect.SeedNode.String(),
 		}
 	}
 	m.logger.Debug("Got response from seed node", "targetCount", len(m.targets))
@@ -306,6 +307,9 @@ func (m *Master) logProgress() {
 
 func (m *Master) logTimeProgress() {
 	interactions := m.countInteractions()
+	if interactions == 0 {
+		return
+	}
 	totalSeconds := m.timeSinceStart().Seconds()
 	expectedTestTime := m.cfg.Clients.MaxTestTime.Duration().Seconds()
 	progress := float64(0)
@@ -326,6 +330,9 @@ func (m *Master) logTimeProgress() {
 
 func (m *Master) logInteractionProgress() {
 	interactions := m.countInteractions()
+	if interactions == 0 {
+		return
+	}
 	expectedInteractions := float64(m.getExpectedInteractions())
 	progress := float64(100) * float64(interactions) / expectedInteractions
 	totalSeconds := m.timeSinceStart().Seconds()
@@ -517,9 +524,28 @@ func (m *Master) getExpectedInteractions() int64 {
 	return m.expectedInteractions
 }
 
+func (m *Master) authenticateSlaveRequest(w http.ResponseWriter, r *http.Request) error {
+	if !m.cfg.Master.Auth.Enabled {
+		return nil
+	}
+	username, password, ok := r.BasicAuth()
+	if !ok {
+		return fmt.Errorf("failed to parse basic auth from HTTP header")
+	}
+	// validate the username
+	if username != m.cfg.Master.Auth.Username {
+		return fmt.Errorf("invalid username")
+	}
+	return bcrypt.CompareHashAndPassword([]byte(m.cfg.Master.Auth.PasswordHash), []byte(password))
+}
+
 func (m *Master) handleSlaveRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		jsonResponse(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := m.authenticateSlaveRequest(w, r); err != nil {
+		jsonResponse(w, "Authentication failed", http.StatusUnauthorized)
 		return
 	}
 	var slave remoteSlave

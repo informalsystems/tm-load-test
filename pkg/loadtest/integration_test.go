@@ -75,6 +75,43 @@ request_wait_max = "0ms"
 request_timeout = "5s"
 `
 
+const kvstoreAuthConfig = `[master]
+bind = "{{.MasterAddr}}"
+expect_slaves = 2
+expect_slaves_within = "1m"
+
+	[master.auth]
+	enabled = true
+	username = "testuser"
+	password_hash = "$2a$08$rd8XKT/IO1a7MqcobrGX0epg05Z6/fEPopygo9G6yWuq4xLz8uhxq"
+
+[slave]
+bind = "127.0.0.1:"
+master = "http://testuser:testpassword@{{.MasterAddr}}"
+expect_master_within = "1m"
+expect_start_within = "1m"
+
+[test_network]
+    [test_network.autodetect]
+    enabled = false
+
+    [[test_network.targets]]
+    id = "host1"
+    url = "{{.RPCAddr}}/websocket"
+
+[clients]
+type = "kvstore-websockets"
+additional_params = ""
+spawn = 10
+spawn_rate = 10.0
+max_interactions = {{.MaxInteractions}}
+interaction_timeout = "11s"
+max_test_time = "{{.MaxTestTime}}"
+request_wait_min = "0ms"
+request_wait_max = "0ms"
+request_timeout = "5s"
+`
+
 type runResult struct {
 	summary *loadtest.Summary
 	err     error
@@ -161,6 +198,16 @@ func TestKVStoreWebSocketsIntegrationWithTimeLimit(t *testing.T) {
 	})
 }
 
+func TestIntegrationWithAuth(t *testing.T) {
+	runIntegrationTest(t, &testCase{
+		rawConfig:                  kvstoreAuthConfig,
+		maxInteractions:            1,
+		maxTestTime:                time.Duration(60 * time.Second),
+		expectedMasterInteractions: 2 * 10 * 1, // no. of slaves * no. of clients * max interactions
+		expectedSlaveInteractions:  []int64{10, 10},
+	})
+}
+
 func runIntegrationTest(t *testing.T, tc *testCase) {
 	testCfg, err := generateConfig(tc.rawConfig, tc.maxInteractions, tc.maxTestTime.String())
 	if err != nil {
@@ -192,10 +239,14 @@ func waitAndAssertCorrect(t *testing.T, tc *testCase) {
 			if r.summary.Interactions != tc.expectedMasterInteractions {
 				t.Errorf("expected %d interactions from master, but got %d", tc.expectedMasterInteractions, r.summary.Interactions)
 			}
+		} else {
+			if r.summary.Interactions == 0 {
+				t.Errorf("expected some interactions master, but got none")
+			}
 		}
 
-	// We give the master an extra second's leeway here
-	case <-time.After(tc.maxTestTime + time.Second):
+	// We give the master an extra few seconds' leeway here
+	case <-time.After(tc.maxTestTime + (3 * time.Second)):
 		t.Error("maximum test time expired")
 	}
 	// get all slaves' results
@@ -208,6 +259,10 @@ func waitAndAssertCorrect(t *testing.T, tc *testCase) {
 			if tc.maxInteractions > -1 {
 				if r.summary.Interactions != tc.expectedSlaveInteractions[i] {
 					t.Errorf("expected %d interactions from slave %d, but got %d", tc.expectedSlaveInteractions[i], i, r.summary.Interactions)
+				}
+			} else {
+				if r.summary.Interactions == 0 {
+					t.Errorf("expected some interactions from slave %d, but got none", i)
 				}
 			}
 

@@ -1,6 +1,9 @@
 # Changelog
 
 ## v0.2.1
+* [\#11](https://github.com/interchainio/tm-load-test/pull/11) Allow for basic
+  HTTP authentication between the master and slave nodes for additional
+  security.
 * [\#10](https://github.com/interchainio/tm-load-test/pull/10) Allow clients
   to continuously send transactions until the maximum time limit is reached
   without having a limit imposed on the number of transactions.
