@@ -1,9 +1,11 @@
 GOPATH ?= $(shell go env GOPATH)
-OUTPUT ?= build/tm-load-test
-.PHONY: build test lint
+BUILD_DIR ?= ./build
+.PHONY: build test lint clean
+.DEFAULT_GOAL := build
 
 build:
-	GO111MODULE=on go build -o $(OUTPUT) cmd/tm-load-test/main.go
+	GO111MODULE=on go build -o $(BUILD_DIR)/tm-load-test ./cmd/tm-load-test/main.go
+	GO111MODULE=on go build -o $(BUILD_DIR)/tm-outage-sim-server ./cmd/tm-outage-sim-server/main.go
 
 test:
 	GO111MODULE=on go test -cover -race ./...
@@ -13,20 +15,6 @@ $(GOPATH)/bin/golangci-lint:
 
 lint: $(GOPATH)/bin/golangci-lint
 	GO111MODULE=on $(GOPATH)/bin/golangci-lint run ./...
-
-### Dev area
-
-.DEFAULT_GOAL := build
-.PHONY: protos clean
-
-
-$(GOPATH)/bin/protoc-gen-gogoslick:
-	GO111MODULE=off go get -u github.com/gogo/protobuf/...
-
-protos: $(GOPATH)/bin/protoc-gen-gogoslick
-	$(GOPATH)/bin/protoc-gen-gogoslick --gogoslick_out=pkg/loadtest/messages/ \
-		-Ipkg/loadtest/messages/ \
-		loadtest.proto
 
 clean:
 	rm -rf $(BUILD_DIR)

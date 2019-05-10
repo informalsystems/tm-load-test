@@ -5,41 +5,61 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/interchainio/tm-load-test/internal/outagesim"
 )
 
 func main() {
 	var (
-		addr = flag.String("addr", ":34000", "the address to which to bind this server")
+		addr         = flag.String("addr", ":26680", "the address to which to bind this server")
+		username     = flag.String("u", "tm-load-test", "the username for requests authenticating against the control endpoint")
+		passwordHash = flag.String("p", "", "a bcrypt user ID hash for authenticating requests to the control endpoint")
 	)
 	flag.Usage = func() {
 		fmt.Println(`Tendermint outage simulator server
 
-Provides an HTTP interface through which one can bring a local Tendermint
-service down or up.
+Provides an authenticated HTTP interface through which one can bring a local
+Tendermint service down or up.
 
-NOTE: This requires root privileges to allow this process to interact with the
-Tendermint service. This is a SECURITY RISK and thus this application must only
-be used for testing purposes and with careful network restrictions as to who
-can access this service.
+This application requires the relevant system privileges to be able to interact
+with the Tendermint service. See https://unix.stackexchange.com/q/215412 for an
+example as to how to configure a non-root user to have the relevant sudo
+privileges to start/stop a service.
 
 Usage:
-  tm-outage-sim-server -addr 127.0.0.1:34000
+  tm-outage-sim-server \
+	-addr 127.0.0.1:26680 \
+	-u tm-load-test \
+	-p "\$2a\$12$ac6f8zq9vvugNb3QXeOV9.RGFHeu8a7qhf9WIRAfH69a0k2j7J7wy"
+
+Note the use of escape characters above when specifying the bcrypt hash on the
+command line.
 
 Flags:`)
 		flag.PrintDefaults()
 		fmt.Println(`
 Examples of how to bring Tendermint up/down:
-  curl -s -X POST -d "up" http://127.0.0.1:34000
-  curl -s -X POST -d "down" http://127.0.0.1:34000`)
+  curl -s -X POST -d "up" http://tm-load-test:testpassword@127.0.0.1:26680
+  curl -s -X POST -d "down" http://tm-load-test:testpassword@127.0.0.1:26680`)
 		fmt.Println("")
 	}
 	flag.Parse()
 
+	if *username == "" {
+		fmt.Println("Error: a username is required for running this service")
+		os.Exit(1)
+	}
+	if *passwordHash == "" {
+		fmt.Println("Error: a bcrypt password hash is required for running this service")
+		os.Exit(1)
+	}
+
 	http.HandleFunc(
 		"/",
 		outagesim.MakeOutageEndpointHandler(
+			*username,
+			*passwordHash,
 			outagesim.IsTendermintRunning,
 			outagesim.ExecuteServiceCmd,
 		),
