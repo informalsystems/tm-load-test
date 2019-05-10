@@ -7,8 +7,10 @@ bind = "127.0.0.1:35000"
     enabled = false
     # Username to use in basic HTTP authentication.
     username = "loadtestuser"
-    # The bcrypt hash of the password required to validate slaves.
-    password_hash = "$2a$12$.pR8I4VZttp2PoemVDvxbuDRpj25svTxa6NL2oVMazGGjq5S4vOum"
+    # The bcrypt hash of the password required to validate slaves. NOTE: Try not
+    # to use bcrypt cost factors above 8 - this slows down progress updates to
+    # the master significantly. 
+    password_hash = "$2a$08$rd8XKT/IO1a7MqcobrGX0epg05Z6/fEPopygo9G6yWuq4xLz8uhxq"
 
 # How many slaves to expect to connect before starting the load test
 expect_slaves = 2
@@ -29,7 +31,9 @@ wait_after_finished = "10s"
 bind = "127.0.0.1:"
 
 # HTTP address by which the master can be reached. If the master requires
-# authentication, include the username:password in the URL below.
+# authentication, include the username:password in the URL below. Alternatively,
+# include the username and password in the TMLOADTEST_MASTER_USERNAME and
+# TMLOADTEST_MASTER_PASSWORD environment variables when running the slave.
 master = "http://127.0.0.1:35000"
 
 # How long to keep polling for the master before considering the master to have
