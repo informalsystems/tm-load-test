@@ -1,6 +1,8 @@
 # Changelog
 
 ## v0.3.0
+* [\#13](https://github.com/interchainio/tm-load-test/pull/13) - Add basic HTTP
+  authentication to `tm-outage-sim-server` utility.
 * [\#12](https://github.com/interchainio/tm-load-test/pull/12) - Add standalone
   mode to be able to run load testing tool locally in a simple way.
 * [\#11](https://github.com/interchainio/tm-load-test/pull/11) - Allow for basic
