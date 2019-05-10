@@ -3,6 +3,7 @@ package loadtest
 import (
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -25,8 +26,7 @@ func init() {
 func Run() {
 	var (
 		rootCmd    = flag.NewFlagSet("root", flag.ExitOnError)
-		isMaster   = rootCmd.Bool("master", false, "start this process in MASTER mode")
-		isSlave    = rootCmd.Bool("slave", false, "start this process in SLAVE mode")
+		mode       = rootCmd.String("mode", "", "the mode in which to start tm-load-test; can be master/slave/standalone")
 		configFile = rootCmd.String("c", "load-test.toml", "the path to the configuration file for a load test")
 		isVerbose  = rootCmd.Bool("v", false, "increase logging verbosity to DEBUG level")
 	)
@@ -36,9 +36,12 @@ func Run() {
 tm-load-test is a tool for distributed load testing on Tendermint networks,
 assuming that your Tendermint network currently runs the "kvstore" proxy app.
 
-Usage:
-  tm-load-test -c load-test.toml -master   # Run a master
-  tm-load-test -c load-test.toml -slave    # Run a slave
+Usage (master/slave):
+  tm-load-test -c load-test.toml -mode master   # Run a master
+  tm-load-test -c load-test.toml -mode slave    # Run a slave
+
+Usage (standalone):
+  tm-load-test -c load-test.toml -mode standalone # Execute a single master and slave node together
 
 Flags:`)
 		rootCmd.PrintDefaults()
@@ -46,11 +49,6 @@ Flags:`)
 	}
 	if err := rootCmd.Parse(os.Args[1:]); err != nil {
 		fmt.Println("Error:", err)
-		os.Exit(1)
-	}
-
-	if (!*isMaster && !*isSlave) || (*isMaster && *isSlave) {
-		fmt.Println("Either -master or -slave is expected on the command line to explicitly specify which mode to use.")
 		os.Exit(1)
 	}
 
@@ -62,12 +60,22 @@ Flags:`)
 	var summary *Summary
 	var err error
 
-	if *isMaster {
+	switch *mode {
+	case "master":
 		logger.Info("Starting in MASTER mode")
 		summary, err = RunMaster(*configFile)
-	} else {
+
+	case "slave":
 		logger.Info("Starting in SLAVE mode")
 		summary, err = RunSlave(*configFile)
+
+	case "standalone":
+		logger.Info("Starting in STANDALONE mode")
+		summary, err = RunStandalone(*configFile)
+
+	default:
+		logger.Error("Invalid mode for starting load testing tool", "mode", *mode)
+		os.Exit(1)
 	}
 
 	if err != nil {
@@ -134,4 +142,69 @@ func RunSlaveWithConfig(cfg *Config) (*Summary, error) {
 		slave.Kill()
 	}()
 	return slave.Run()
+}
+
+// RunStandalone executes a master and slave node together on the same machine,
+// returning the summary and final status from the master component of the
+// standalone load test operation.
+func RunStandalone(configFile string) (summary *Summary, err error) {
+	var cfg *Config
+	cfg, err = LoadConfig(configFile)
+	if err != nil {
+		return
+	}
+	// override whatever number of clients we expect
+	cfg.Master.ExpectSlaves = 1
+	// resolve the master's bind address
+	cfg.Master.Bind, err = resolveBindAddr(cfg.Master.Bind)
+	if err != nil {
+		return
+	}
+
+	// make sure the slave knows this precise address
+	var u *url.URL
+	u, err = url.Parse(fmt.Sprintf("http://%s", cfg.Master.Bind))
+	if err != nil {
+		err = NewError(ErrInvalidConfig, err, "failed to construct internal master address for standalone mode")
+		return
+	}
+	cfg.Slave.Master = ParseableURL(*u)
+
+	var master *Master
+	var slave *Slave
+
+	master, err = NewMaster(cfg)
+	if err != nil {
+		return
+	}
+	slave, err = NewSlave(cfg)
+	if err != nil {
+		return
+	}
+
+	sigc := make(chan os.Signal, 1)
+	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+	go func() {
+		sig := <-sigc
+		master.logger.Info("Received signal", "signal", sig.String())
+		master.Kill()
+		slave.Kill()
+	}()
+
+	masterDonec := make(chan struct{})
+	slaveDonec := make(chan struct{})
+
+	go func() {
+		summary, err = master.Run()
+		close(masterDonec)
+	}()
+	go func() {
+		_, _ = slave.Run()
+		close(slaveDonec)
+	}()
+
+	// wait for both to finish
+	<-masterDonec
+	<-slaveDonec
+	return
 }

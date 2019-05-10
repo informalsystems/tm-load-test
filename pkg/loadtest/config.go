@@ -140,7 +140,7 @@ func (m *MasterConfig) Validate() error {
 		return NewError(ErrInvalidConfig, nil, "master bind address must be specified")
 	}
 	if m.ExpectSlaves < 1 {
-		return NewError(ErrInvalidConfig, nil, "master must expect at least one slave")
+		return NewError(ErrInvalidConfig, nil, fmt.Sprintf("master must expect at least one slave, but got %d", m.ExpectSlaves))
 	}
 	return nil
 }
