@@ -5,12 +5,20 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/interchainio/tm-load-test/pkg/loadtest/clients"
 	"github.com/interchainio/tm-load-test/pkg/timeutils"
 
 	"github.com/BurntSushi/toml"
+)
+
+// Environment variable-related constants.
+const (
+	EnvPrefix            = "TMLOADTEST_"
+	EnvOutageSimUser     = EnvPrefix + "OUTAGESIMUSER"
+	EnvOutageSimPassword = EnvPrefix + "OUTAGESIMPASS"
 )
 
 // DefaultHealthCheckInterval is the interval at which slave nodes are expected
@@ -66,7 +74,8 @@ type SlaveConfig struct {
 // TestNetworkConfig encapsulates information about the network under test.
 type TestNetworkConfig struct {
 	Autodetect TestNetworkAutodetectConfig `toml:"autodetect"`
-	Targets    []TestNetworkTargetConfig   `toml:"targets"` // Configuration for each of the Tendermint nodes in the network.
+	Targets    []TestNetworkTargetConfig   `toml:"targets"`              // Configuration for each of the Tendermint nodes in the network.
+	OutageSim  TestNetworkOutageSimConfig  `toml:"outage_sim,omitempty"` // Configuration for the outage simulator.
 }
 
 // TestNetworkAutodetectConfig encapsulates information relating to the
@@ -79,13 +88,21 @@ type TestNetworkAutodetectConfig struct {
 	TargetSeedNode      bool                        `toml:"target_seed_node"` // Whether or not to include the seed node itself in load testing.
 }
 
+// TestNetworkOutageSimConfig encapsulates the outage simulator configuration
+// for our test network.
+type TestNetworkOutageSimConfig struct {
+	Enabled    bool   `toml:"enabled"`            // Is the outage simulator enabled?
+	Plan       string `toml:"plan"`               // The simulation plan.
+	TargetPort int    `toml:"target_port"`        // The target port for all of the nodes' outage simulator instances.
+	Username   string `toml:"username,omitempty"` // The username for accessing the outage simulator endpoints. Overridden by environment variable.
+	Password   string `toml:"password,omitempty"` // The password for accessing the outage simulator endpoints. Overridden by environment variable.
+}
+
 // TestNetworkTargetConfig encapsulates the configuration for each node in the
 // Tendermint test network.
 type TestNetworkTargetConfig struct {
 	ID  string `toml:"id"`  // A short, descriptive identifier for this node.
 	URL string `toml:"url"` // The RPC URL for this target node.
-
-	Outages string `toml:"outages,omitempty"` // Specify an outage schedule to try to affect for this host.
 }
 
 // ParseConfig will parse the configuration from the given string.
@@ -178,7 +195,8 @@ func (c *TestNetworkConfig) Validate() error {
 			return err
 		}
 	}
-	return nil
+
+	return c.OutageSim.Validate()
 }
 
 //
@@ -218,6 +236,33 @@ func (c *TestNetworkTargetConfig) Validate(i int) error {
 	}
 	if len(c.URL) == 0 {
 		return NewError(ErrInvalidConfig, nil, fmt.Sprintf("test network target %d is missing its RPC URL", i))
+	}
+	return nil
+}
+
+//
+// TestNetworkOutageSimConfig
+//
+
+func (c *TestNetworkOutageSimConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	username, password := os.Getenv(EnvOutageSimUser), os.Getenv(EnvOutageSimPassword)
+	if len(username) > 0 {
+		c.Username = username
+	}
+	if len(password) > 0 {
+		c.Password = password
+	}
+	if len(c.Username) == 0 {
+		return NewError(ErrInvalidConfig, nil, fmt.Sprintf("expected username for test network outage simulation config, but got none"))
+	}
+	if len(c.Password) == 0 {
+		return NewError(ErrInvalidConfig, nil, fmt.Sprintf("expected password for test network outage simulation config, but got none"))
+	}
+	if len(c.Plan) == 0 {
+		return NewError(ErrInvalidConfig, nil, fmt.Sprintf("outage simulator configuration plan is empty"))
 	}
 	return nil
 }
