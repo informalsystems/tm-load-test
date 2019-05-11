@@ -33,6 +33,11 @@ the `master.expect_slaves` and `slave.master` parameters in your configuration
 file):
 
 ```bash
+# Initialize your local Tendermint node to ~/.tendermint
+tendermint init
+# Run a node with the kvstore proxy app
+tendermint node --proxy_app kvstore
+
 # Run the load test in standalone mode with the given configuration (-v sets
 # output logging to DEBUG level)
 ./build/tm-load-test -c examples/load-test.toml -mode standalone -v
@@ -43,7 +48,7 @@ The [`load-test.toml`](./examples/load-test.toml) example demonstrates usage
 with the following configuration:
 
 * A single Tendermint node with RPC endpoint available at `localhost:26657`
-* The load testing master bound to `localhost:35000`
+* The load testing master bound to `localhost:26670`
 * 2 slaves bound to arbitrary ports on `localhost`
 * Each slave spawns 50 clients
 * Each client executes 100 interactions with the Tendermint node
