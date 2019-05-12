@@ -62,17 +62,18 @@ func makeOutageSimHandler(resultc chan outageSimTestResult) func(w http.Response
 	}
 }
 
+func makeOutageSimServer() (*httptest.Server, chan outageSimTestResult) {
+	resultc := make(chan outageSimTestResult, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", makeOutageSimHandler(resultc))
+	return httptest.NewServer(mux), resultc
+}
+
 func TestOutageSimulator(t *testing.T) {
-	ts1resultc := make(chan outageSimTestResult, 1)
-	mux1 := http.NewServeMux()
-	mux1.HandleFunc("/", makeOutageSimHandler(ts1resultc))
-	ts1 := httptest.NewServer(mux1)
+	ts1, ts1resultc := makeOutageSimServer()
 	defer ts1.Close()
 
-	ts2resultc := make(chan outageSimTestResult, 1)
-	mux2 := http.NewServeMux()
-	mux2.HandleFunc("/", makeOutageSimHandler(ts2resultc))
-	ts2 := httptest.NewServer(mux2)
+	ts2, ts2resultc := makeOutageSimServer()
 	defer ts2.Close()
 
 	nodeURLs := map[string]string{
