@@ -36,6 +36,10 @@ const DefaultMaxMissedHealthChecks = 2
 // considered to have failed if we don't hear from it during that period.
 const DefaultMaxMissedHealthCheckPeriod = ((DefaultMaxMissedHealthChecks + 1) * DefaultHealthCheckInterval)
 
+// DefaultOutageSimTargetPort specifies the default port on which to find the
+// outage simulator.
+const DefaultOutageSimTargetPort = 26680
+
 // Config is the central configuration structure for our load testing, from both
 // the master and slaves' perspectives.
 type Config struct {
@@ -91,11 +95,11 @@ type TestNetworkAutodetectConfig struct {
 // TestNetworkOutageSimConfig encapsulates the outage simulator configuration
 // for our test network.
 type TestNetworkOutageSimConfig struct {
-	Enabled    bool   `toml:"enabled"`            // Is the outage simulator enabled?
-	Plan       string `toml:"plan"`               // The simulation plan.
-	TargetPort int    `toml:"target_port"`        // The target port for all of the nodes' outage simulator instances.
-	Username   string `toml:"username,omitempty"` // The username for accessing the outage simulator endpoints. Overridden by environment variable.
-	Password   string `toml:"password,omitempty"` // The password for accessing the outage simulator endpoints. Overridden by environment variable.
+	Enabled    bool   `toml:"enabled"`               // Is the outage simulator enabled?
+	Plan       string `toml:"plan"`                  // The simulation plan.
+	TargetPort int    `toml:"target_port,omitempty"` // The target port for all of the nodes' outage simulator instances.
+	Username   string `toml:"username,omitempty"`    // The username for accessing the outage simulator endpoints. Overridden by environment variable.
+	Password   string `toml:"password,omitempty"`    // The password for accessing the outage simulator endpoints. Overridden by environment variable.
 }
 
 // TestNetworkTargetConfig encapsulates the configuration for each node in the
@@ -191,8 +195,8 @@ func (c *TestNetworkConfig) Validate() error {
 		return NewError(ErrInvalidConfig, nil, "test network must have at least one target (found 0)")
 	}
 	for i, target := range c.Targets {
-		if err := target.Validate(i); err != nil {
-			return err
+		if err := target.Validate(); err != nil {
+			return NewError(ErrInvalidConfig, nil, fmt.Sprintf("test network target %d: %v", i, err))
 		}
 	}
 
@@ -244,12 +248,12 @@ func (c *TestNetworkConfig) GetTargetRPCURLs() []string {
 // TestNetworkTargetConfig
 //
 
-func (c *TestNetworkTargetConfig) Validate(i int) error {
+func (c *TestNetworkTargetConfig) Validate() error {
 	if len(c.ID) == 0 {
-		return NewError(ErrInvalidConfig, nil, fmt.Sprintf("test network target %d is missing an ID", i))
+		return NewError(ErrInvalidConfig, nil, "ID is missing")
 	}
 	if len(c.URL) == 0 {
-		return NewError(ErrInvalidConfig, nil, fmt.Sprintf("test network target %d is missing its RPC URL", i))
+		return NewError(ErrInvalidConfig, nil, "RPC URL is missing")
 	}
 	return nil
 }
@@ -277,6 +281,9 @@ func (c *TestNetworkOutageSimConfig) Validate() error {
 	}
 	if len(c.Plan) == 0 {
 		return NewError(ErrInvalidConfig, nil, fmt.Sprintf("outage simulator configuration plan is empty"))
+	}
+	if c.TargetPort == 0 {
+		c.TargetPort = DefaultOutageSimTargetPort
 	}
 	return nil
 }

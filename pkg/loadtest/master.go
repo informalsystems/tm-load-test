@@ -634,9 +634,14 @@ func (m *Master) unregisterReadySubscriber(id int) {
 }
 
 func (m *Master) startOutageSim() (err error) {
+	var targetURL *url.URL
 	nodeURLs := make(map[string]string)
 	for _, targetCfg := range m.getTargets() {
-		nodeURLs[targetCfg.ID] = targetCfg.URL
+		targetURL, err = url.Parse(targetCfg.URL)
+		if err != nil {
+			return
+		}
+		nodeURLs[targetCfg.ID] = fmt.Sprintf("%s://%s:%d", targetURL.Scheme, targetURL.Hostname(), m.cfg.TestNetwork.OutageSim.TargetPort)
 	}
 	m.outageSim, err = NewOutageSimulator(
 		m.cfg.TestNetwork.OutageSim.Plan,
