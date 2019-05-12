@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/interchainio/tm-load-test/internal/logging"
 )
 
 // DefaultOutageSimTimeout is the default timeout before considering a request
@@ -32,6 +34,7 @@ type OutageSimulator struct {
 // NodeOutageSimulator is a client for interacting with tm-outage-sim-server on
 // behalf of a single target network node.
 type NodeOutageSimulator struct {
+	logger        logging.Logger
 	statusUpdates *NodeStatusUpdate // The first status update in the linked list.
 	donec         chan struct{}     // Closed when this node's outage simulation is complete.
 }
@@ -44,6 +47,7 @@ type NodeStatusUpdate struct {
 	Status NodeStatus
 	Next   *NodeStatusUpdate // The status update to be executed after this one.
 
+	logger       logging.Logger
 	client       *http.Client // An HTTP client with which to make the requests.
 	outageSimURL *url.URL     // The URL to which to make this status update.
 	username     string
@@ -72,7 +76,7 @@ func NewOutageSimulator(plan, username, password string, nodeURLs map[string]str
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse outage simulator URL for target %s: %v", moniker, err)
 		}
-		nodes[moniker], err = NewNodeOutageSimulator(outageSimURL, username, password, nodePlan)
+		nodes[moniker], err = NewNodeOutageSimulator(moniker, outageSimURL, username, password, nodePlan)
 		if err != nil {
 			return nil, err
 		}
@@ -87,6 +91,13 @@ func NewOutageSimulator(plan, username, password string, nodeURLs map[string]str
 func (s *OutageSimulator) Start(errc chan error) {
 	for _, node := range s.nodes {
 		node.Start(errc)
+	}
+}
+
+// Cancel will cancel all node outage simulators.
+func (s *OutageSimulator) Cancel() {
+	for _, node := range s.nodes {
+		node.Cancel()
 	}
 }
 
@@ -141,11 +152,12 @@ func parseOutagePlan(plan string) (nodePlan map[string]string, err error) {
 
 // NewNodeOutageSimulator parses the given plan to produce either a single-node
 // outage simulator, or an error on failure.
-func NewNodeOutageSimulator(outageSimURL *url.URL, username, password, plan string) (*NodeOutageSimulator, error) {
+func NewNodeOutageSimulator(moniker string, outageSimURL *url.URL, username, password, plan string) (*NodeOutageSimulator, error) {
 	var curUpdate *NodeStatusUpdate
 	lastStatus := NodeUp
 	sim := &NodeOutageSimulator{
-		donec: make(chan struct{}),
+		logger: logging.NewLogrusLogger(fmt.Sprintf("outagesim-%s", moniker)),
+		donec:  make(chan struct{}),
 	}
 	client := &http.Client{Timeout: DefaultOutageSimTimeout}
 
@@ -160,7 +172,7 @@ func NewNodeOutageSimulator(outageSimURL *url.URL, username, password, plan stri
 		}
 		lastStatus = newStatus
 
-		newUpdate := NewNodeStatusUpdate(client, outageSimURL, username, password, wait, newStatus, sim.donec)
+		newUpdate := NewNodeStatusUpdate(client, outageSimURL, username, password, wait, newStatus, sim.donec, sim.logger)
 		if curUpdate == nil {
 			curUpdate = newUpdate
 			sim.statusUpdates = curUpdate
@@ -228,11 +240,13 @@ func NewNodeStatusUpdate(
 	wait time.Duration,
 	status NodeStatus,
 	donec chan struct{},
+	logger logging.Logger,
 ) *NodeStatusUpdate {
 
 	return &NodeStatusUpdate{
 		Wait:         wait,
 		Status:       status,
+		logger:       logger,
 		client:       client,
 		outageSimURL: outageSimURL,
 		username:     username,
@@ -274,6 +288,7 @@ func (u *NodeStatusUpdate) Join() {
 }
 
 func (u *NodeStatusUpdate) waitAndExecute() (err error) {
+	u.logger.Debug("Waiting to execute outage", "wait", u.Wait.String())
 	ticker := time.NewTicker(u.Wait)
 	defer ticker.Stop()
 	select {
@@ -287,20 +302,24 @@ func (u *NodeStatusUpdate) waitAndExecute() (err error) {
 }
 
 func (u *NodeStatusUpdate) execute() (err error) {
+	u.logger.Info("Attempting to update node status", "status", u.Status)
 	req, err := http.NewRequest("POST", u.outageSimURL.String(), strings.NewReader(string(u.Status)))
 	if err != nil {
+		u.logger.Error("Failed to construct request", "err", err)
 		return
 	}
 	defer req.Body.Close()
 	req.SetBasicAuth(u.username, u.password)
 	res, err := u.client.Do(req)
 	if err != nil {
+		u.logger.Error("Failed to execute request", "err", err)
 		return
 	}
 	defer res.Body.Close()
 	if res.StatusCode >= 400 {
 		body, _ := ioutil.ReadAll(res.Body)
-		return fmt.Errorf("request to outage simulator failed with status code %d: %s", res.StatusCode, string(body))
+		err = fmt.Errorf("request to outage simulator failed with status code %d: %s", res.StatusCode, string(body))
+		u.logger.Error("Unacceptable response from outage simulator server", "err", err)
 	}
 	return
 }
