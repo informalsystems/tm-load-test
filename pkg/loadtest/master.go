@@ -40,6 +40,9 @@ type Master struct {
 	readySubscribers map[int]chan bool
 
 	slavec chan slaveRequest
+
+	outageSim     *OutageSimulator
+	outageSimErrc chan error
 }
 
 type slaveRequest struct {
@@ -64,7 +67,8 @@ func NewMaster(cfg *Config) (*Master, error) {
 		expectedInteractions: int64(cfg.Master.ExpectSlaves) * int64(cfg.Clients.Spawn) * int64(cfg.Clients.MaxInteractions),
 		readySubscribers:     make(map[int]chan bool),
 		slavec:               make(chan slaveRequest, cfg.Master.ExpectSlaves),
-		targets:              make(map[string]TestNetworkTargetConfig),
+		targets:              cfg.TestNetwork.TargetsAsMap(),
+		outageSimErrc:        make(chan error, 1),
 	}
 	if cfg.Clients.MaxInteractions == -1 {
 		m.expectedInteractions = -1
@@ -102,6 +106,12 @@ func (m *Master) Run() (*Summary, error) {
 
 	if err := m.waitForSlaves(); err != nil {
 		return nil, m.fail(err)
+	}
+
+	if m.cfg.TestNetwork.OutageSim.Enabled {
+		if err := m.startOutageSim(); err != nil {
+			return nil, m.fail(err)
+		}
 	}
 
 	if err := m.doLoadTest(); err != nil {
@@ -471,6 +481,9 @@ func (m *Master) shutdown() {
 	if err := m.svr.shutdown(); err != nil {
 		m.logger.Error("Failed to shut down HTTP server", "err", err)
 	}
+	if m.cfg.TestNetwork.OutageSim.Enabled {
+		m.shutdownOutageSim()
+	}
 	if err := m.getShutdownErr(); err != nil {
 		m.logger.Error("Master failed", "err", err)
 	} else {
@@ -618,6 +631,50 @@ func (m *Master) unregisterReadySubscriber(id int) {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
 	delete(m.readySubscribers, id)
+}
+
+func (m *Master) startOutageSim() (err error) {
+	nodeURLs := make(map[string]string)
+	for _, targetCfg := range m.getTargets() {
+		nodeURLs[targetCfg.ID] = targetCfg.URL
+	}
+	m.outageSim, err = NewOutageSimulator(
+		m.cfg.TestNetwork.OutageSim.Plan,
+		m.cfg.TestNetwork.OutageSim.Username,
+		m.cfg.TestNetwork.OutageSim.Password,
+		nodeURLs,
+	)
+	if err != nil {
+		return
+	}
+	go m.listenForOutageSimErrors()
+	m.logger.Info("Starting outage simulator")
+	m.outageSim.Start(m.outageSimErrc)
+	return
+}
+
+func (m *Master) shutdownOutageSim() {
+	m.logger.Info("Waiting for outage simulator to complete")
+	m.outageSim.Wait()
+	m.logger.Info("Outage simulator complete")
+}
+
+func (m *Master) listenForOutageSimErrors() {
+	killCheckTicker := time.NewTicker(100 * time.Millisecond)
+	defer killCheckTicker.Stop()
+	for {
+		select {
+		case err := <-m.outageSimErrc:
+			m.fail(NewError(ErrMasterFailed, err, "outage simulator error")) // nolint: errcheck
+			return
+
+		case <-killCheckTicker.C:
+			if m.killed() {
+				m.outageSim.Cancel()
+				return
+			}
+		}
+	}
 }
 
 //-----------------------------------------------------------------------------

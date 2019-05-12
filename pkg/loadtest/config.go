@@ -199,6 +199,20 @@ func (c *TestNetworkConfig) Validate() error {
 	return c.OutageSim.Validate()
 }
 
+// TargetsAsMap converts the internal targets array into a mapping of the target
+// nodes' IDs to their configurations.
+func (c *TestNetworkConfig) TargetsAsMap() (m map[string]TestNetworkTargetConfig) {
+	m = make(map[string]TestNetworkTargetConfig)
+	// we don't want to return any targets at all if we're autodetecting nodes
+	if c.Autodetect.Enabled {
+		return
+	}
+	for _, t := range c.Targets {
+		m[t.ID] = t
+	}
+	return
+}
+
 //
 // TestNetworkAutodetectConfig
 //
