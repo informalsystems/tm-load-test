@@ -1,6 +1,6 @@
 [master]
 # The host IP/port to which to bind the master
-bind = "127.0.0.1:35000"
+bind = "127.0.0.1:26670"
 
 # How many slaves to expect to connect before starting the load test
 expect_slaves = 2
@@ -34,7 +34,7 @@ bind = "127.0.0.1:"
 # authentication, include the username:password in the URL below. Alternatively,
 # include the username and password in the TMLOADTEST_MASTER_USERNAME and
 # TMLOADTEST_MASTER_PASSWORD environment variables when running the slave.
-master = "http://127.0.0.1:35000"
+master = "http://127.0.0.1:26670"
 
 # How long to keep polling for the master before considering the master to have
 # failed to start up at all.

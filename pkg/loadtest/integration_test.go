@@ -135,7 +135,6 @@ type testCase struct {
 
 	expectedMasterInteractions int64
 	expectedSlaveInteractions  []int64
-	expectedMinTestTime        time.Duration
 }
 
 func generateConfig(tpl string, maxInteractions int, maxTestTime string) (string, error) {
@@ -186,15 +185,6 @@ func TestKVStoreWebSocketsIntegration(t *testing.T) {
 		maxTestTime:                time.Duration(time.Minute),
 		expectedMasterInteractions: 2 * 10 * 1, // no. of slaves * no. of clients * max interactions
 		expectedSlaveInteractions:  []int64{10, 10},
-	})
-}
-
-func TestKVStoreWebSocketsIntegrationWithTimeLimit(t *testing.T) {
-	runIntegrationTest(t, &testCase{
-		rawConfig:           kvstoreWebSocketsConfig,
-		maxInteractions:     -1,
-		maxTestTime:         time.Duration(2 * time.Second),
-		expectedMinTestTime: time.Duration(2 * time.Second),
 	})
 }
 
