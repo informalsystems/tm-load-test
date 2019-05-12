@@ -1,6 +1,8 @@
 # Changelog
 
 ## v0.3.0
+* [\#14](https://github.com/interchainio/tm-load-test/pull/14) - Add support for
+  the outage simulator from the master node during load testing.
 * [\#13](https://github.com/interchainio/tm-load-test/pull/13) - Add basic HTTP
   authentication to `tm-outage-sim-server` utility.
 * [\#12](https://github.com/interchainio/tm-load-test/pull/12) - Add standalone
