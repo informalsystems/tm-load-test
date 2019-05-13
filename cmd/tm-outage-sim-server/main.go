@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/interchainio/tm-load-test/internal/outagesim"
 )
@@ -14,7 +15,7 @@ func main() {
 	var (
 		addr         = flag.String("addr", ":26680", "the address to which to bind this server")
 		username     = flag.String("u", "tm-load-test", "the username for requests authenticating against the control endpoint")
-		passwordHash = flag.String("p", "", "a bcrypt user ID hash for authenticating requests to the control endpoint")
+		passwordHash = flag.String("p", "", "a bcrypt password hash for authenticating requests to the control endpoint")
 	)
 	flag.Usage = func() {
 		fmt.Println(`Tendermint outage simulator server
@@ -29,12 +30,18 @@ privileges to start/stop a service.
 
 Usage:
   tm-outage-sim-server \
-	-addr 127.0.0.1:26680 \
-	-u tm-load-test \
-	-p "\$2a\$12$ac6f8zq9vvugNb3QXeOV9.RGFHeu8a7qhf9WIRAfH69a0k2j7J7wy"
+    -addr 127.0.0.1:26680 \
+    -u tm-load-test \
+    -p "\$2a\$12\$ac6f8zq9vvugNb3QXeOV9.RGFHeu8a7qhf9WIRAfH69a0k2j7J7wy"
 
 Note the use of escape characters above when specifying the bcrypt hash on the
-command line.
+command line. Alternatively, you can replace the dollar signs ($) with
+hash symbols (#), such as:
+
+  tm-outage-sim-server \
+    -addr 127.0.0.1:26680 \
+    -u tm-load-test \
+    -p "#2a#12#ac6f8zq9vvugNb3QXeOV9.RGFHeu8a7qhf9WIRAfH69a0k2j7J7wy"
 
 Flags:`)
 		flag.PrintDefaults()
@@ -59,7 +66,7 @@ Examples of how to bring Tendermint up/down:
 		"/",
 		outagesim.MakeOutageEndpointHandler(
 			*username,
-			*passwordHash,
+			strings.Replace(*passwordHash, "#", "$", -1),
 			outagesim.IsTendermintRunning,
 			outagesim.ExecuteServiceCmd,
 		),
