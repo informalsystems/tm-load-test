@@ -5,7 +5,7 @@ import "os/exec"
 // IsTendermintRunning attempts to check whether there is a process called
 // "tendermint" currently running on the system.
 func IsTendermintRunning() bool {
-	cmd := exec.Command("pidof", "tendermint")
+	cmd := exec.Command("sudo", "pidof", "tendermint")
 	return cmd.Run() == nil
 }
 
@@ -14,6 +14,6 @@ func IsTendermintRunning() bool {
 // process to be running as root, and requires the OS to have a `service`
 // command (such as CentOS, Ubuntu or Debian).
 func ExecuteServiceCmd(status string) error {
-	cmd := exec.Command("service", "tendermint", status)
+	cmd := exec.Command("sudo", "/bin/systemctl", status, "tendermint")
 	return cmd.Run()
 }
