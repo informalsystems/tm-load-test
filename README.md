@@ -107,6 +107,10 @@ configuration files that make use of each of these client types.
 To implement your own client type to load test your own Tendermint ABCI
 application, see the [`loadtest` package docs here](./pkg/loadtest/README.md).
 
+## Outage Simulation
+See the [`tm-outage-sim-server`](./cmd/tm-outage-sim-server/) folder for
+documentation regarding the controlled simulation of Tendermint node "outages".
+
 ## Development
 To run the linter and the tests:
 
