@@ -1,7 +1,8 @@
 # tm-outage-sim-server
 
-A simple [Tendermint](https://tendermint.com) outage simulator server for use on
-CentOS and Debian/Ubuntu-derived operating systems.
+A simple [Tendermint](https://tendermint.com) outage simulator server to allow
+one to easily start or stop Tendermint nodes for experimentation and QA
+purposes.
 
 ## Overview
 `tm-outage-sim-server` runs a simple HTTP server alongside a Tendermint node. It
@@ -12,20 +13,28 @@ the Tendermint service up or down, respectively.
 **Do not run this service continuously alongside a production Tendermint
 instance**. Despite the fact that the current version of `tm-outage-sim-server`
 includes a basic HTTP authentication requirement, this might still allow an
-attacker to stop your Tendermint node.
+attacker to stop your Tendermint node should they discover your password.
 
 This application requires the relevant system privileges to be able to interact
-with the Tendermint service. See [this
-discussion](https://unix.stackexchange.com/q/215412) for an example as to how to
-configure a non-root user to have the relevant sudo privileges to start/stop a
-service.
+with the Tendermint service. For example, if a user `outage-sim` were
+responsible for running this server, one could put the following configuration
+in `/etc/sudo.d/outage-sim`:
+
+```
+outage-sim ALL=(ALL) NOPASSWD: /bin/systemctl start tendermint, /bin/systemctl stop tendermint, /sbin/pidof tendermint
+```
+
+This is because `tm-outage-sim-server` calls all of the above commands to
+interact with the Tendermint service via `sudo` calls.
+
+See [this discussion](https://unix.stackexchange.com/q/215412) for more details.
 
 ## Requirements
 The following are minimum requirements for running this application:
 
-* CentOS, Debian or Ubuntu (or Debian-derived OS)
-* Root privileges for the service (as it needs to control the Tendermint service
-  on the same machine)
+* A UNIX variant that uses systemd
+* Correctly configured `sudo` privileges for the user that will be running the
+  `tm-outage-sim-server` service.
 * Tendermint v0.29.1+
 
 To build `tm-outage-sim-server`, you will need:
@@ -39,23 +48,28 @@ following `systemd` configuration file
 
 ```
 [Unit]
-Description=Tendermint Outage Simulator Server
+Description=Tendermint Outage Simulator
 Requires=network-online.target
 After=network-online.target
 
 [Service]
 Restart=on-failure
-User=tm-outage-sim
-Group=tm-outage-sim
+User=outage-sim
+Group=outage-sim
 PermissionsStartOnly=true
-ExecStart=/usr/bin/tm-outage-sim-server -p "\$2a\$12$ac6f8zq9vvugNb3QXeOV9.RGFHeu8a7qhf9WIRAfH69a0k2j7J7wy"
+ExecStart=/usr/bin/tm-outage-sim-server -addr 0.0.0.0:26680 -u loadtest -p "#2a#12#ac6f8zq9vvugNb3QXeOV9.RGFHeu8a7qhf9WIRAfH69a0k2j7J7wy"
 StandardOutput=syslog
 StandardError=syslog
-SyslogIdentifier=tm-outage-sim-server
+SyslogIdentifier=outage-sim
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+Note how the bcrypt hash above has its `$` symbols replaced with `#`. One could
+simply escape the `$` symbols too, however, but `tm-outage-sim-server` supports
+bcrypt hashes specified in this alternative format to make such files marginally
+more readable.
 
 Then:
 
