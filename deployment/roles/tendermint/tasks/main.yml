@@ -1,0 +1,37 @@
+---
+- name: Ensure Tendermint group exists
+  group:
+    name: "{{ tendermint_group }}"
+    state: present
+- name: Ensure Tendermint user exists
+  user:
+    name: "{{ tendermint_user }}"
+    shell: /bin/bash
+    home: /home/tendermint
+    group: "{{ tendermint_group }}"
+- name: Sync the Tendermint binary across to the server
+  synchronize:
+    src: "{{ tendermint_binary }}"
+    dest: /usr/bin/tendermint
+- name: Copy the Tendermint node configuration across
+  copy:
+    src: "{{ tendermint_config_path }}/{{ inventory_hostname }}/"
+    dest: /home/tendermint/.tendermint/
+  when: copy_tendermint_config == 1
+- name: Ensure the Tendermint user owns the Tendermint home directory
+  file:
+    path: /home/tendermint/.tendermint/
+    recurse: yes
+    owner: "{{ tendermint_user }}"
+    group: "{{ tendermint_group }}"
+- name: Ensure systemd service is present
+  template:
+    src: tendermint.jinja2.service
+    dest: /etc/systemd/system/tendermint.service
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+- name: (Re)start Tendermint
+  service:
+    name: tendermint
+    state: restarted
