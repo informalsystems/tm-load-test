@@ -3,6 +3,7 @@ package outagesim
 import (
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 
 	"golang.org/x/crypto/bcrypt"
@@ -46,7 +47,7 @@ func MakeOutageEndpointHandler(
 	isTendermintRunningFn func() bool,
 	executeServiceCmdFn func(string) error,
 ) func(http.ResponseWriter, *http.Request) {
-
+	log.Printf("Creating outage simulator endpoint: username=%s passwordHash=%s", username, passwordHash)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			respond(w, http.StatusMethodNotAllowed, "Unsupported method")
@@ -57,6 +58,7 @@ func MakeOutageEndpointHandler(
 			return
 		}
 		if err := authenticate(r, username, passwordHash); err != nil {
+			log.Printf("Failed authentication attempt from: %s", r.RemoteAddr)
 			respond(w, http.StatusUnauthorized, fmt.Sprintf("Error: %v", err))
 			return
 		}
@@ -67,8 +69,10 @@ func MakeOutageEndpointHandler(
 		}
 		switch string(body) {
 		case "up":
+			log.Printf("Attempting to bring Tendermint UP")
 			tendermintUp(w, isTendermintRunningFn, executeServiceCmdFn)
 		case "down":
+			log.Printf("Attempting to bring Tendermint DOWN")
 			tendermintDown(w, isTendermintRunningFn, executeServiceCmdFn)
 		default:
 			respond(w, http.StatusBadRequest, "Unrecognised command")

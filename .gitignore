@@ -25,4 +25,5 @@ __pycache__
 .idea
 .terragrunt-cache
 /*.log
-
+venv/
+/deployment/hosts

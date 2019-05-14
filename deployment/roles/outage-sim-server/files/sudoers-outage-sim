@@ -1,0 +1,1 @@
+outage-sim ALL=(ALL) NOPASSWD: /bin/systemctl start tendermint, /bin/systemctl stop tendermint, /sbin/pidof tendermint
