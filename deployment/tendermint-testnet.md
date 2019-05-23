@@ -75,7 +75,7 @@ ansible-playbook --version
 ```
 
 ### Step 4: Deploy the test network
-After activating your virtual environment, execute the `test-network.sh` script:
+After activating your virtual environment, execute the `testnet.sh` script:
 
 ```bash
 cd /path/to/github.com/interchainio/tm-load-test/deployment
