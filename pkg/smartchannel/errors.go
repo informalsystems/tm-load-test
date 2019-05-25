@@ -10,7 +10,7 @@ type (
 		Timeout time.Duration
 	}
 
-	ErrEmpty struct {}
+	ErrEmpty struct{}
 
 	ErrOverflow struct {
 		MaxCapacity int
