@@ -10,6 +10,8 @@ type (
 		Timeout time.Duration
 	}
 
+	ErrEmpty struct {}
+
 	ErrOverflow struct {
 		MaxCapacity int
 	}
@@ -19,6 +21,10 @@ type (
 
 func (e ErrTimedOut) Error() string {
 	return fmt.Sprintf("receive timed out waiting after %s", e.Timeout.String())
+}
+
+func (e ErrEmpty) Error() string {
+	return "channel is empty"
 }
 
 func (e ErrOverflow) Error() string {

@@ -10,10 +10,20 @@ import (
 // channel is full to capacity and we receive a new message.
 type OverflowStrategy string
 
+// ReadStrategy defines how to handle the case when the channel is empty and a
+// read is attempted.
+type ReadStrategy string
+
 // Overflow strategies for when a channel is full to its capacity.
 const (
-	BlockStrategy OverflowStrategy = "block" // Just block until there is capacity (normal Go channel behaviour).
-	FailStrategy  OverflowStrategy = "fail"  // Returns an error immediately if the channel is full.
+	OverflowBlockStrategy OverflowStrategy = "block" // Just block until there is capacity (normal Go channel behaviour).
+	OverflowFailStrategy  OverflowStrategy = "fail"  // Returns an error immediately if the channel is full.
+)
+
+// Read strategies for when a channel is empty and a read is attempted.
+const (
+	ReadBlockStrategy ReadStrategy = "block" // Block until a message comes through.
+	ReadFailStrategy  ReadStrategy = "fail"  // Return an error immediately if the channel's empty.
 )
 
 // State allows us to keep track of the current state of the channel.
@@ -31,6 +41,7 @@ type Channel struct {
 	mtx              sync.RWMutex
 	ch               chan interface{}
 	maxCapacity      int
+	readStrategy     ReadStrategy
 	overflowStrategy OverflowStrategy
 	state            State
 }
@@ -43,10 +54,11 @@ type ReceiveResult struct {
 
 // New creates a smart channel with the given maximum capacity and
 // overflow strategy.
-func New(maxCapacity int, overflowStrategy OverflowStrategy) *Channel {
+func New(maxCapacity int, readStrategy ReadStrategy, overflowStrategy OverflowStrategy) *Channel {
 	return &Channel{
 		ch:               make(chan interface{}, maxCapacity),
 		maxCapacity:      maxCapacity,
+		readStrategy:     readStrategy,
 		overflowStrategy: overflowStrategy,
 		state:            Open,
 	}
@@ -57,6 +69,13 @@ func (c *Channel) MaxCapacity() int {
 	c.mtx.RLock()
 	defer c.mtx.RUnlock()
 	return c.maxCapacity
+}
+
+// ReadStrategy reports the preconfigured read strategy for this channel.
+func (c *Channel) ReadStrategy() ReadStrategy {
+	c.mtx.RLock()
+	defer c.mtx.RUnlock()
+	return c.readStrategy
 }
 
 // OverflowStrategy reports the preconfigured overflow strategy for this
@@ -99,6 +118,12 @@ func (c *Channel) Receive(timeout ...time.Duration) (interface{}, error) {
 	if c.State() == Closed {
 		return nil, ErrClosed{}
 	}
+	if c.Size() == 0 {
+		switch c.readStrategy {
+		case ReadFailStrategy:
+			return nil, ErrEmpty{}
+		}
+	}
 	if len(timeout) == 0 {
 		return <-c.ch, nil
 	}
@@ -136,7 +161,7 @@ func (c *Channel) Send(msg interface{}, timeout ...time.Duration) error {
 
 	if len(c.ch) == c.maxCapacity {
 		switch c.overflowStrategy {
-		case FailStrategy:
+		case OverflowFailStrategy:
 			return ErrOverflow{MaxCapacity: c.maxCapacity}
 		}
 	}
