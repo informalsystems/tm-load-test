@@ -10,7 +10,7 @@ import (
 )
 
 func TestBasicSendAndReceive(t *testing.T) {
-	ch := smartchannel.New(1, smartchannel.ReadBlockStrategy, smartchannel.OverflowBlockStrategy)
+	ch := smartchannel.New()
 	defer ch.Close()
 	require.NoError(t, ch.Send("hello"))
 	m, err := ch.Receive()
@@ -19,15 +19,15 @@ func TestBasicSendAndReceive(t *testing.T) {
 }
 
 func TestGetters(t *testing.T) {
-	ch := smartchannel.New(1, smartchannel.ReadBlockStrategy, smartchannel.OverflowBlockStrategy)
+	ch := smartchannel.New()
 	defer ch.Close()
 	require.Equal(t, 1, ch.MaxCapacity())
-	require.Equal(t, smartchannel.OverflowBlockStrategy, ch.OverflowStrategy())
+	require.Equal(t, smartchannel.OverflowBlock, ch.OverflowStrategy())
 	require.Equal(t, smartchannel.Open, ch.State())
 }
 
 func TestRawChannelAccess(t *testing.T) {
-	ch := smartchannel.New(1, smartchannel.ReadBlockStrategy, smartchannel.OverflowBlockStrategy)
+	ch := smartchannel.New()
 	defer ch.Close()
 	ch.Raw() <- "hello"
 	m := <-ch.Raw()
@@ -35,7 +35,7 @@ func TestRawChannelAccess(t *testing.T) {
 }
 
 func TestReceiveWithTimeout(t *testing.T) {
-	ch := smartchannel.New(1, smartchannel.ReadBlockStrategy, smartchannel.OverflowBlockStrategy)
+	ch := smartchannel.New()
 	defer ch.Close()
 	donec := make(chan struct{})
 	var v interface{}
@@ -58,7 +58,7 @@ func TestReceiveWithTimeout(t *testing.T) {
 }
 
 func TestReceiveAsync(t *testing.T) {
-	ch := smartchannel.New(1, smartchannel.ReadBlockStrategy, smartchannel.OverflowBlockStrategy)
+	ch := smartchannel.New()
 	defer ch.Close()
 
 	require.NoError(t, ch.Send("hello"))
@@ -74,7 +74,7 @@ func TestReceiveAsync(t *testing.T) {
 }
 
 func TestReceiveAsyncWithTimeout(t *testing.T) {
-	ch := smartchannel.New(1, smartchannel.ReadBlockStrategy, smartchannel.OverflowBlockStrategy)
+	ch := smartchannel.New()
 	defer ch.Close()
 
 	select {
@@ -89,7 +89,7 @@ func TestReceiveAsyncWithTimeout(t *testing.T) {
 }
 
 func TestSendWithTimeout(t *testing.T) {
-	ch := smartchannel.New(1, smartchannel.ReadBlockStrategy, smartchannel.OverflowBlockStrategy)
+	ch := smartchannel.New()
 	defer ch.Close()
 
 	// fill the channel
@@ -100,7 +100,7 @@ func TestSendWithTimeout(t *testing.T) {
 	go func() {
 		defer close(donec)
 		// this should block
-		err = ch.Send("message 2", 50 * time.Millisecond)
+		err = ch.Send("message 2", 50*time.Millisecond)
 	}()
 
 	select {
@@ -115,7 +115,7 @@ func TestSendWithTimeout(t *testing.T) {
 }
 
 func TestSendAsync(t *testing.T) {
-	ch := smartchannel.New(1, smartchannel.ReadBlockStrategy, smartchannel.OverflowBlockStrategy)
+	ch := smartchannel.New()
 	defer ch.Close()
 
 	select {
@@ -131,7 +131,7 @@ func TestSendAsync(t *testing.T) {
 }
 
 func TestOpenClose(t *testing.T) {
-	ch := smartchannel.New(1, smartchannel.ReadBlockStrategy, smartchannel.OverflowBlockStrategy)
+	ch := smartchannel.New()
 	defer ch.Close()
 	require.Equal(t, smartchannel.Open, ch.State())
 	ch.Close()
@@ -139,7 +139,7 @@ func TestOpenClose(t *testing.T) {
 
 	// all of these cases should return the ErrClosed error when the channel is
 	// closed
-	testCases := []struct{fn func() error}{
+	testCases := []struct{ fn func() error }{
 		{
 			fn: func() error {
 				return ch.Send("shouldn't go through")
@@ -153,7 +153,7 @@ func TestOpenClose(t *testing.T) {
 		},
 		{
 			fn: func() error {
-				_, err := ch.PollSize(10 * time.Millisecond, func(n int) {})
+				_, err := ch.PollSize(10*time.Millisecond, func(n int) {})
 				return err
 			},
 		},
@@ -182,18 +182,20 @@ func TestOpenClose(t *testing.T) {
 }
 
 func TestFailOverflowStrategy(t *testing.T) {
-	ch := smartchannel.New(1, smartchannel.ReadBlockStrategy, smartchannel.OverflowFailStrategy)
+	ch := smartchannel.New(smartchannel.OverflowStrategyFail)
 	defer ch.Close()
 
-	require.NoError(t, ch.Send("this should go through"))
-	err := ch.Send("this should fail")
+	err := <-ch.SendAsync("this should go through", 50*time.Millisecond)
+	require.NoError(t, err)
+
+	err = <-ch.SendAsync("this should not go through", 50*time.Millisecond)
 	require.Error(t, err)
 	_, isErrOverflow := err.(smartchannel.ErrOverflow)
 	require.True(t, isErrOverflow, "expected error to be of type ErrOverflow")
 }
 
 func TestFailReadStrategy(t *testing.T) {
-	ch := smartchannel.New(1, smartchannel.ReadFailStrategy, smartchannel.OverflowBlockStrategy)
+	ch := smartchannel.New(smartchannel.ReadStrategyFail)
 	defer ch.Close()
 
 	_, err := ch.Receive()
@@ -203,11 +205,11 @@ func TestFailReadStrategy(t *testing.T) {
 }
 
 func TestSizePolling(t *testing.T) {
-	ch := smartchannel.New(3, smartchannel.ReadBlockStrategy, smartchannel.OverflowBlockStrategy)
+	ch := smartchannel.New(smartchannel.MaxCapacity(3))
 	defer ch.Close()
 
 	sizec := make(chan int, 1)
-	closec, err := ch.PollSize(50 * time.Millisecond, func(n int) {
+	closec, err := ch.PollSize(50*time.Millisecond, func(n int) {
 		sizec <- n
 	})
 	require.NoError(t, err)

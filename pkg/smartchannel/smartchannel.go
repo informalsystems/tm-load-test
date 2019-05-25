@@ -16,15 +16,27 @@ type ReadStrategy string
 
 // Overflow strategies for when a channel is full to its capacity.
 const (
-	OverflowBlockStrategy OverflowStrategy = "block" // Just block until there is capacity (normal Go channel behaviour).
-	OverflowFailStrategy  OverflowStrategy = "fail"  // Returns an error immediately if the channel is full.
+	OverflowBlock OverflowStrategy = "block" // Just block until there is capacity (normal Go channel behaviour).
+	OverflowFail  OverflowStrategy = "fail"  // Returns an error immediately if the channel is full.
 )
 
 // Read strategies for when a channel is empty and a read is attempted.
 const (
-	ReadBlockStrategy ReadStrategy = "block" // Block until a message comes through.
-	ReadFailStrategy  ReadStrategy = "fail"  // Return an error immediately if the channel's empty.
+	ReadBlock ReadStrategy = "block" // Block until a message comes through.
+	ReadFail  ReadStrategy = "fail"  // Return an error immediately if the channel's empty.
 )
+
+// DefaultMaxCapacity is the default maximum capacity of a channel if one is not
+// supplied in the constructor.
+const DefaultMaxCapacity = 1
+
+// DefaultOverflowStrategy is the overflow strategy of a channel if one is not
+// supplied in the constructor.
+const DefaultOverflowStrategy = OverflowBlock
+
+// DefaultReadStrategy is the read strategy of a channel if one is not supplied
+// in the constructor.
+const DefaultReadStrategy = ReadBlock
 
 // State allows us to keep track of the current state of the channel.
 type State string
@@ -46,22 +58,51 @@ type Channel struct {
 	state            State
 }
 
+// ChannelOpt defines options to modify the channel's default behaviour.
+type ChannelOpt func(ch *Channel)
+
 // ReceiveResult is obtained from asynchronous receive operations.
 type ReceiveResult struct {
 	Message interface{}
 	Error   error
 }
 
+func MaxCapacity(n int) ChannelOpt {
+	return func(ch *Channel) {
+		ch.maxCapacity = n
+	}
+}
+
+func OverflowStrategyBlock(ch *Channel) {
+	ch.overflowStrategy = OverflowBlock
+}
+
+func OverflowStrategyFail(ch *Channel) {
+	ch.overflowStrategy = OverflowFail
+}
+
+func ReadStrategyBlock(ch *Channel) {
+	ch.readStrategy = ReadBlock
+}
+
+func ReadStrategyFail(ch *Channel) {
+	ch.readStrategy = ReadFail
+}
+
 // New creates a smart channel with the given maximum capacity and
 // overflow strategy.
-func New(maxCapacity int, readStrategy ReadStrategy, overflowStrategy OverflowStrategy) *Channel {
-	return &Channel{
-		ch:               make(chan interface{}, maxCapacity),
-		maxCapacity:      maxCapacity,
-		readStrategy:     readStrategy,
-		overflowStrategy: overflowStrategy,
+func New(opts ...ChannelOpt) *Channel {
+	ch := &Channel{
+		maxCapacity:      DefaultMaxCapacity,
+		readStrategy:     DefaultReadStrategy,
+		overflowStrategy: DefaultOverflowStrategy,
 		state:            Open,
 	}
+	for _, opt := range opts {
+		opt(ch)
+	}
+	ch.ch = make(chan interface{}, ch.maxCapacity)
+	return ch
 }
 
 // MaxCapacity reports the preconfigured maximum capacity of this channel.
@@ -120,7 +161,7 @@ func (c *Channel) Receive(timeout ...time.Duration) (interface{}, error) {
 	}
 	if c.Size() == 0 {
 		switch c.readStrategy {
-		case ReadFailStrategy:
+		case ReadFail:
 			return nil, ErrEmpty{}
 		}
 	}
@@ -161,7 +202,7 @@ func (c *Channel) Send(msg interface{}, timeout ...time.Duration) error {
 
 	if len(c.ch) == c.maxCapacity {
 		switch c.overflowStrategy {
-		case OverflowFailStrategy:
+		case OverflowFail:
 			return ErrOverflow{MaxCapacity: c.maxCapacity}
 		}
 	}
@@ -249,7 +290,7 @@ func (c *Channel) String() string {
 	c.mtx.RLock()
 	defer c.mtx.RUnlock()
 	return fmt.Sprintf(
-		"Channel{state=%s, maxCapacity=%d, overflowStrategy=%s}",
+		"Channel{state=%s, maxCapacity=%d, OverflowStrategy=%s}",
 		c.state,
 		c.maxCapacity,
 		c.overflowStrategy,
