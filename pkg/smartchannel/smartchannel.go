@@ -58,8 +58,8 @@ type Channel struct {
 	state            State
 }
 
-// ChannelOpt defines options to modify the channel's default behaviour.
-type ChannelOpt func(ch *Channel)
+// Option defines options to modify the channel's default behaviour.
+type Option func(ch *Channel)
 
 // ReceiveResult is obtained from asynchronous receive operations.
 type ReceiveResult struct {
@@ -67,7 +67,7 @@ type ReceiveResult struct {
 	Error   error
 }
 
-func MaxCapacity(n int) ChannelOpt {
+func MaxCapacity(n int) Option {
 	return func(ch *Channel) {
 		ch.maxCapacity = n
 	}
@@ -91,7 +91,7 @@ func ReadStrategyFail(ch *Channel) {
 
 // New creates a smart channel with the given maximum capacity and
 // overflow strategy.
-func New(opts ...ChannelOpt) *Channel {
+func New(opts ...Option) *Channel {
 	ch := &Channel{
 		maxCapacity:      DefaultMaxCapacity,
 		readStrategy:     DefaultReadStrategy,
