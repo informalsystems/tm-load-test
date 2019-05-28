@@ -30,8 +30,8 @@ type Props func(a Actor)
 
 // Start instantiates a single actor using the given factory and options and
 // spawns its entire lifecycle in a separate goroutine.
-func Start(f Factory, props Props, id string, opts ...Option) *ActorRef {
-	ref := newActorRef(id, opts...)
+func Start(f Factory, props Props, id string, parent *ActorRef, opts ...Option) *ActorRef {
+	ref := newActorRef(id, parent, opts...)
 	go eventLoop(f, props, id, ref)
 	return ref
 }

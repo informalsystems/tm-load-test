@@ -4,7 +4,7 @@ type LifecycleEventType string
 
 // The different kinds of lifecycle events that an actor can emit.
 const (
-	Created  LifecycleEventType = "created"
+	Creating LifecycleEventType = "creating"
 	Starting LifecycleEventType = "starting"
 	Running  LifecycleEventType = "running"
 	Stopping LifecycleEventType = "stopping"
