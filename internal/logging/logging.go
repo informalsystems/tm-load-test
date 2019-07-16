@@ -18,11 +18,10 @@ type Logger interface {
 
 // LogrusLogger is a thread-safe logger whose properties persist and can be modified.
 type LogrusLogger struct {
-	logger *logrus.Entry
-	ctx    string
-	fields map[string]interface{}
-	mtx    *sync.Mutex
-
+	mtx             sync.Mutex
+	logger          *logrus.Entry
+	ctx             string
+	fields          map[string]interface{}
 	pushedFieldSets []map[string]interface{}
 }
 
@@ -49,7 +48,6 @@ func NewLogrusLogger(ctx string, kvpairs ...interface{}) Logger {
 		logger:          logger,
 		ctx:             ctx,
 		fields:          serializeKVPairs(kvpairs),
-		mtx:             &sync.Mutex{},
 		pushedFieldSets: []map[string]interface{}{},
 	}
 }
