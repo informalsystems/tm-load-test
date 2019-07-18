@@ -13,12 +13,10 @@ require (
 	github.com/pkg/errors v0.8.1 // indirect
 	github.com/prometheus/client_golang v0.9.2
 	github.com/rcrowley/go-metrics v0.0.0-20181016184325-3113b8401b8a // indirect
-	github.com/rs/cors v1.6.0 // indirect
 	github.com/satori/go.uuid v1.2.0
 	github.com/sirupsen/logrus v1.4.1
-	github.com/syndtr/goleveldb v1.0.0 // indirect
-	github.com/tendermint/go-amino v0.14.1 // indirect
-	github.com/tendermint/tendermint v0.31.3
+	github.com/spf13/cobra v0.0.5
+	github.com/tendermint/tendermint v0.32.1
 	golang.org/x/crypto v0.0.0-20190411191339-88737f569e3a
 	golang.org/x/net v0.0.0-20190404232315-eb5bcb51f2a3 // indirect
 	golang.org/x/sys v0.0.0-20190411185658-b44545bcd369 // indirect

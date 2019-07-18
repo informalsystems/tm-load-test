@@ -1,317 +1,120 @@
 package loadtest
 
 import (
-	"encoding"
+	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"net/url"
-	"os"
-	"time"
-
-	"github.com/interchainio/tm-load-test/pkg/loadtest/clients"
-	"github.com/interchainio/tm-load-test/pkg/timeutils"
-
-	"github.com/BurntSushi/toml"
 )
 
-// Environment variable-related constants.
-const (
-	EnvPrefix            = "TMLOADTEST_"
-	EnvOutageSimUser     = EnvPrefix + "OUTAGESIMUSER"
-	EnvOutageSimPassword = EnvPrefix + "OUTAGESIMPASS"
-)
-
-// DefaultHealthCheckInterval is the interval at which slave nodes are expected
-// to send a `LoadTestUnderway` message after starting their load testing.
-const DefaultHealthCheckInterval = 2 * time.Second
-
-// DefaultMaxMissedHealthChecks is the number of health checks that a slave can
-// miss before being considered as "failed" (i.e. one more missed health check
-// than `DefaultMaxMissedHealthChecks` will result in total load testing
-// failure). Also applies to the slaves' attempts to reach the master before
-// they consider the master to be down.
-const DefaultMaxMissedHealthChecks = 2
-
-// DefaultMaxMissedHealthCheckPeriod is the time after which a slave is
-// considered to have failed if we don't hear from it during that period.
-const DefaultMaxMissedHealthCheckPeriod = ((DefaultMaxMissedHealthChecks + 1) * DefaultHealthCheckInterval)
-
-// DefaultOutageSimTargetPort specifies the default port on which to find the
-// outage simulator.
-const DefaultOutageSimTargetPort = 26680
-
-// Config is the central configuration structure for our load testing, from both
-// the master and slaves' perspectives.
+// Config represents the configuration for a single client (i.e. standalone or
+// slave).
 type Config struct {
-	Master      MasterConfig      `toml:"master"`       // The master's load testing configuration.
-	Slave       SlaveConfig       `toml:"slave"`        // The slaves' load testing configuration.
-	TestNetwork TestNetworkConfig `toml:"test_network"` // The test network layout/configuration.
-	Clients     clients.Config    `toml:"clients"`      // Load testing client-related configuration.
+	ClientFactory     string   `json:"client_factory"`      // Which client factory should we use for load testing?
+	Connections       int      `json:"connections"`         // The number of WebSockets connections to make to each target endpoint.
+	Time              int      `json:"time"`                // The total time, in seconds, for which to run the load test.
+	SendPeriod        int      `json:"send_period"`         // The period (in seconds) at which to send batches of transactions.
+	Rate              int      `json:"rate"`                // The number of transactions to generate, per send period.
+	Size              int      `json:"size"`                // The desired size of each generated transaction, in bytes.
+	Count             int      `json:"count"`               // The maximum number of transactions to send. Set to -1 for unlimited.
+	BroadcastTxMethod string   `json:"broadcast_tx_method"` // The broadcast_tx method to use (can be "sync", "async" or "commit").
+	Endpoints         []string `json:"endpoints"`           // A list of the Tendermint node endpoints to which to connect for this load test.
 }
 
-// MasterConfig provides the configuration for the load testing master.
+// MasterConfig is the configuration options specific to a master node.
 type MasterConfig struct {
-	Bind               string                      `toml:"bind"`                          // The address to which to bind the master (host:port).
-	Auth               MasterAuthConfig            `toml:"auth"`                          // Authentication configuration for the master.
-	ExpectSlaves       int                         `toml:"expect_slaves"`                 // The number of slaves to expect to connect before starting the load test.
-	ExpectSlavesWithin timeutils.ParseableDuration `toml:"expect_slaves_within"`          // The time period within which to expect to hear from all slaves, otherwise causes a failure.
-	WaitAfterFinished  timeutils.ParseableDuration `toml:"wait_after_finished,omitempty"` // A time period to wait after successful completion of the load testing before completely shutting the master down.
+	BindAddr            string `json:"bind_addr"`       // The "host:port" to which to bind the master node to listen for incoming slaves.
+	ExpectSlaves        int    `json:"expect_slaves"`   // The number of slaves to expect before starting the load test.
+	SlaveConnectTimeout int    `json:"connect_timeout"` // The number of seconds to wait for all slaves to connect.
 }
 
-// MasterAuthConfig encapsulates authentication configuration for the load
-// testing master node.
-type MasterAuthConfig struct {
-	Enabled      bool   `toml:"enabled"`       // Is basic HTTP authentication enabled?
-	Username     string `toml:"username"`      // The username for accessing the master, if enabled.
-	PasswordHash string `toml:"password_hash"` // The bcrypt hash of the password for accessing the master, if enabled.
-}
-
-// SlaveConfig provides configuration specific to the load testing slaves.
+// SlaveConfig is the configuration options specific to a slave node.
 type SlaveConfig struct {
-	Bind               string                      `toml:"bind"`   // The address to which to bind slave nodes (host:port).
-	Master             ParseableURL                `toml:"master"` // The master's external address (URL).
-	ExpectMasterWithin timeutils.ParseableDuration `toml:"expect_master_within"`
-	ExpectStartWithin  timeutils.ParseableDuration `toml:"expect_start_within"`
-	WaitAfterFinished  timeutils.ParseableDuration `toml:"wait_after_finished,omitempty"` // A time period to wait after successful completion of the load testing before completely shutting the slave down.
+	MasterAddr           string `json:"master_addr"`     // The address at which to find the master node.
+	MasterConnectTimeout int    `json:"connect_timeout"` // The maximum amount of time, in seconds, to allow for the master to become available.
 }
 
-// TestNetworkConfig encapsulates information about the network under test.
-type TestNetworkConfig struct {
-	Autodetect TestNetworkAutodetectConfig `toml:"autodetect"`
-	Targets    []TestNetworkTargetConfig   `toml:"targets"`              // Configuration for each of the Tendermint nodes in the network.
-	OutageSim  TestNetworkOutageSimConfig  `toml:"outage_sim,omitempty"` // Configuration for the outage simulator.
+var validBroadcastTxMethods = map[string]interface{}{
+	"async":  nil,
+	"sync":   nil,
+	"commit": nil,
 }
 
-// TestNetworkAutodetectConfig encapsulates information relating to the
-// autodetection of the Tendermint test network nodes under test.
-type TestNetworkAutodetectConfig struct {
-	Enabled             bool                        `toml:"enabled"`        // Is target network autodetection enabled?
-	SeedNode            ParseableURL                `toml:"seed_node"`      // The seed node from which to find other peers/targets.
-	ExpectTargets       int                         `toml:"expect_targets"` // The number of targets to expect prior to starting load testing.
-	ExpectTargetsWithin timeutils.ParseableDuration `toml:"expect_targets_within"`
-	TargetSeedNode      bool                        `toml:"target_seed_node"` // Whether or not to include the seed node itself in load testing.
-}
-
-// TestNetworkOutageSimConfig encapsulates the outage simulator configuration
-// for our test network.
-type TestNetworkOutageSimConfig struct {
-	Enabled    bool   `toml:"enabled"`               // Is the outage simulator enabled?
-	Plan       string `toml:"plan"`                  // The simulation plan.
-	TargetPort int    `toml:"target_port,omitempty"` // The target port for all of the nodes' outage simulator instances.
-	Username   string `toml:"username,omitempty"`    // The username for accessing the outage simulator endpoints. Overridden by environment variable.
-	Password   string `toml:"password,omitempty"`    // The password for accessing the outage simulator endpoints. Overridden by environment variable.
-}
-
-// TestNetworkTargetConfig encapsulates the configuration for each node in the
-// Tendermint test network.
-type TestNetworkTargetConfig struct {
-	ID  string `toml:"id"`  // A short, descriptive identifier for this node.
-	URL string `toml:"url"` // The RPC URL for this target node.
-}
-
-// ParseConfig will parse the configuration from the given string.
-func ParseConfig(data string) (*Config, error) {
-	var cfg Config
-	if _, err := toml.Decode(data, &cfg); err != nil {
-		return nil, NewError(ErrFailedToDecodeConfig, err)
+func (c Config) Validate() error {
+	if len(c.ClientFactory) == 0 {
+		return fmt.Errorf("Client factory name must be specified")
 	}
-	// validate the configuration
-	if err := cfg.Validate(); err != nil {
-		return nil, err
+	if _, exists := clientFactories[c.ClientFactory]; !exists {
+		return fmt.Errorf("Client factory \"%s\" does not exist", c.ClientFactory)
 	}
-	return &cfg, nil
+	if c.Connections < 1 {
+		return fmt.Errorf("Expected connections to be >= 1, but was %d", c.Connections)
+	}
+	if c.Time < 1 {
+		return fmt.Errorf("Expected load test time to be >= 1 second, but was %d", c.Time)
+	}
+	if c.SendPeriod < 1 {
+		return fmt.Errorf("Expected transaction send period to be >= 1 second, but was %d", c.SendPeriod)
+	}
+	if c.Rate < 1 {
+		return fmt.Errorf("Expected transaction rate to be >= 1, but was %d", c.Rate)
+	}
+	if c.Size < 40 {
+		return fmt.Errorf("Expected transaction size to be >= 40 bytes, but was %d", c.Size)
+	}
+	if c.Count < 1 && c.Count != -1 {
+		return fmt.Errorf("Expected max transaction count to either be -1 or >= 1, but was %d", c.Count)
+	}
+	if _, ok := validBroadcastTxMethods[c.BroadcastTxMethod]; !ok {
+		return fmt.Errorf("Expected broadcast_tx method to be one of \"sync\", \"async\" or \"commit\", but was %s", c.BroadcastTxMethod)
+	}
+	if len(c.Endpoints) == 0 {
+		return fmt.Errorf("Expected at least one endpoint to conduct load test against, but found none")
+	}
+	return nil
 }
 
-// LoadConfig will attempt to load configuration from the given file.
-func LoadConfig(filename string) (*Config, error) {
-	data, err := ioutil.ReadFile(filename)
+func (c MasterConfig) ToJSON() string {
+	b, err := json.Marshal(c)
 	if err != nil {
-		return nil, NewError(ErrFailedToReadConfigFile, err)
+		return fmt.Sprintf("%v", c)
 	}
-	return ParseConfig(string(data))
+	return string(b)
 }
 
-//
-// Config
-//
-
-// Validate does a deep check on the configuration to make sure it makes sense.
-func (c *Config) Validate() error {
-	if err := c.Master.Validate(); err != nil {
-		return err
+func (c MasterConfig) Validate() error {
+	if len(c.BindAddr) == 0 {
+		return fmt.Errorf("Master bind address must be specified")
 	}
-	if err := c.Slave.Validate(); err != nil {
-		return err
+	if c.ExpectSlaves < 1 {
+		return fmt.Errorf("Master expect-slaves must be at least 1, but got %d", c.ExpectSlaves)
 	}
-	if err := c.TestNetwork.Validate(); err != nil {
-		return err
-	}
-	if err := c.Clients.Validate(); err != nil {
-		return err
+	if c.SlaveConnectTimeout < 1 {
+		return fmt.Errorf("Master connect-timeout must be at least 1 second")
 	}
 	return nil
 }
 
-//
-// MasterConfig
-//
-
-func (m *MasterConfig) Validate() error {
-	if len(m.Bind) == 0 {
-		return NewError(ErrInvalidConfig, nil, "master bind address must be specified")
+func (c Config) ToJSON() string {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return fmt.Sprintf("%v", c)
 	}
-	if m.ExpectSlaves < 1 {
-		return NewError(ErrInvalidConfig, nil, fmt.Sprintf("master must expect at least one slave, but got %d", m.ExpectSlaves))
+	return string(b)
+}
+
+func (c SlaveConfig) Validate() error {
+	if len(c.MasterAddr) == 0 {
+		return fmt.Errorf("Master address must be specified")
+	}
+	if c.MasterConnectTimeout < 1 {
+		return fmt.Errorf("Expected connect-timeout to be >= 1, but was %d", c.MasterConnectTimeout)
 	}
 	return nil
 }
 
-//
-// SlaveConfig
-//
-
-func (s *SlaveConfig) Validate() error {
-	if len(s.Bind) == 0 {
-		return NewError(ErrInvalidConfig, nil, "slave needs non-empty bind address")
+func (c SlaveConfig) ToJSON() string {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return fmt.Sprintf("%v", c)
 	}
-	if len(s.Master.String()) == 0 {
-		return NewError(ErrInvalidConfig, nil, "slave address for master must be explicitly specified")
-	}
-	return nil
-}
-
-//
-// TestNetworkConfig
-//
-
-func (c *TestNetworkConfig) Validate() error {
-	// if we're autodetecting the network, no need to validate any explicit test
-	// network config
-	if c.Autodetect.Enabled {
-		return c.Autodetect.Validate()
-	}
-
-	if len(c.Targets) == 0 {
-		return NewError(ErrInvalidConfig, nil, "test network must have at least one target (found 0)")
-	}
-	for i, target := range c.Targets {
-		if err := target.Validate(); err != nil {
-			return NewError(ErrInvalidConfig, nil, fmt.Sprintf("test network target %d: %v", i, err))
-		}
-	}
-
-	return c.OutageSim.Validate()
-}
-
-// TargetsAsMap converts the internal targets array into a mapping of the target
-// nodes' IDs to their configurations.
-func (c *TestNetworkConfig) TargetsAsMap() (m map[string]TestNetworkTargetConfig) {
-	m = make(map[string]TestNetworkTargetConfig)
-	// we don't want to return any targets at all if we're autodetecting nodes
-	if c.Autodetect.Enabled {
-		return
-	}
-	for _, t := range c.Targets {
-		m[t.ID] = t
-	}
-	return
-}
-
-//
-// TestNetworkAutodetectConfig
-//
-
-func (c *TestNetworkAutodetectConfig) Validate() error {
-	if !c.Enabled {
-		return nil
-	}
-	if len(c.SeedNode.String()) == 0 {
-		return NewError(ErrInvalidConfig, nil, "test network autodetection requires a seed node address, but none provided")
-	}
-	if c.ExpectTargets <= 0 {
-		return NewError(ErrInvalidConfig, nil, "test network autodetection requires at least 1 expected target to start testing")
-	}
-	return nil
-}
-
-// GetTargetRPCURLs will return a simple, flattened list of URLs for all of the
-// target nodes' RPC addresses.
-func (c *TestNetworkConfig) GetTargetRPCURLs() []string {
-	urls := make([]string, 0)
-	for _, target := range c.Targets {
-		urls = append(urls, target.URL)
-	}
-	return urls
-}
-
-//
-// TestNetworkTargetConfig
-//
-
-func (c *TestNetworkTargetConfig) Validate() error {
-	if len(c.ID) == 0 {
-		return NewError(ErrInvalidConfig, nil, "ID is missing")
-	}
-	if len(c.URL) == 0 {
-		return NewError(ErrInvalidConfig, nil, "RPC URL is missing")
-	}
-	return nil
-}
-
-//
-// TestNetworkOutageSimConfig
-//
-
-func (c *TestNetworkOutageSimConfig) Validate() error {
-	if !c.Enabled {
-		return nil
-	}
-	username, password := os.Getenv(EnvOutageSimUser), os.Getenv(EnvOutageSimPassword)
-	if len(username) > 0 {
-		c.Username = username
-	}
-	if len(password) > 0 {
-		c.Password = password
-	}
-	if len(c.Username) == 0 {
-		return NewError(ErrInvalidConfig, nil, fmt.Sprintf("expected username for test network outage simulation config, but got none"))
-	}
-	if len(c.Password) == 0 {
-		return NewError(ErrInvalidConfig, nil, fmt.Sprintf("expected password for test network outage simulation config, but got none"))
-	}
-	if len(c.Plan) == 0 {
-		return NewError(ErrInvalidConfig, nil, fmt.Sprintf("outage simulator configuration plan is empty"))
-	}
-	if c.TargetPort == 0 {
-		c.TargetPort = DefaultOutageSimTargetPort
-	}
-	return nil
-}
-
-//-----------------------------------------------------------------------------
-
-// ParseableURL is a URL that we can parse from the configuration.
-type ParseableURL url.URL
-
-var _ encoding.TextUnmarshaler = (*ParseableURL)(nil)
-var _ encoding.TextMarshaler = (*ParseableURL)(nil)
-
-// UnmarshalText allows ParseableURL to implement encoding.TextUnmarshaler.
-func (p *ParseableURL) UnmarshalText(text []byte) error {
-	u, err := url.Parse(string(text))
-	if err == nil {
-		*p = ParseableURL(*u)
-	}
-	return err
-}
-
-// MarshalText converts the URL into a string.
-func (p *ParseableURL) MarshalText() (text []byte, err error) {
-	text = []byte(p.String())
-	return
-}
-
-func (p *ParseableURL) String() string {
-	u := url.URL(*p)
-	return u.String()
+	return string(b)
 }
