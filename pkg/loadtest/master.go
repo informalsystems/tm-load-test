@@ -4,20 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/interchainio/tm-load-test/internal/logging"
-)
-
-type masterState string
-
-const (
-	masterStarting masterState = "starting"
-	masterWaiting  masterState = "waiting" // Ready and waiting for all slaves to connect.
-	masterTesting  masterState = "testing" // Load testing has commenced.
-	masterFailing  masterState = "failing"
-	masterComplete masterState = "complete"
 )
 
 // Master is a WebSockets server that allows slaves to connect to it to obtain
@@ -28,14 +21,14 @@ type Master struct {
 	masterCfg *MasterConfig
 	logger    logging.Logger
 
-	svr *http.Server // The HTTP/WebSockets server.
+	svr        *http.Server  // The HTTP/WebSockets server.
+	svrStopped chan struct{} // Closed when the WebSockets server has shut down.
 
 	slaves map[string]*remoteSlave // Registered remote slaves.
 
 	slaveRegistration chan remoteSlaveRegistrationRequest // Send a request here to register a remote slave.
 	slaveUpdate       chan slaveMsg
 	stop              chan struct{}
-	stopped           chan struct{}
 
 	// Rudimentary statistics
 	startTime          time.Time
@@ -59,10 +52,10 @@ func NewMaster(cfg *Config, masterCfg *MasterConfig) *Master {
 		cfg:               cfg,
 		masterCfg:         masterCfg,
 		logger:            logger,
+		svrStopped:        make(chan struct{}, 1),
 		slaves:            make(map[string]*remoteSlave),
 		slaveRegistration: make(chan remoteSlaveRegistrationRequest, masterCfg.ExpectSlaves),
 		stop:              make(chan struct{}, 1),
-		stopped:           make(chan struct{}, 1),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/websocket", master.newWebSocketHandler())
@@ -77,7 +70,29 @@ func NewMaster(cfg *Config, masterCfg *MasterConfig) *Master {
 // Run will execute the master's operations in a blocking manner, returning
 // any error that causes one of the slaves or the master to fail.
 func (m *Master) Run() error {
-	defer close(m.stopped)
+	defer func() {
+		// gracefully shut down the WebSockets server
+		m.shutdownServer()
+		<-m.svrStopped
+	}()
+
+	sigc := make(chan os.Signal, 1)
+	cancelTrap := make(chan struct{})
+	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-sigc:
+			m.logger.Info("Caught kill signal")
+			close(m.stop)
+
+		case <-cancelTrap:
+			return
+		}
+	}()
+	defer close(cancelTrap)
+
+	// we run the WebSockets server in the background
+	go m.runServer()
 
 	if err := m.waitForSlaves(); err != nil {
 		m.failAllRemoteSlaves(err.Error())
@@ -185,10 +200,6 @@ func (m *Master) ReceiveSlaveUpdate(msg slaveMsg) {
 	m.slaveUpdate <- msg
 }
 
-func (m *Master) receiveSlaveUpdate(msg slaveMsg) {
-	// TODO
-}
-
 func (m *Master) logTestingProgress() {
 	totalTxs := 0
 	for _, rs := range m.slaves {
@@ -204,7 +215,7 @@ func (m *Master) logTestingProgress() {
 		overallAvgRate = float64(totalTxs) / overallElapsed
 	}
 	if elapsed > 0 {
-		avgRate = float64(totalTxs - m.totalTxs) / elapsed
+		avgRate = float64(totalTxs-m.totalTxs) / elapsed
 	}
 
 	m.logger.Info(
@@ -249,6 +260,8 @@ func (m *Master) newWebSocketHandler() func(w http.ResponseWriter, r *http.Reque
 }
 
 func (m *Master) runServer() {
+	defer close(m.svrStopped)
+
 	if err := m.svr.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		m.logger.Error("Server shut down", "err", err)
 		return
@@ -258,7 +271,9 @@ func (m *Master) runServer() {
 
 // Graceful shutdown for the web server.
 func (m *Master) shutdownServer() {
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	if err := m.svr.Shutdown(ctx); err != nil {
 		m.logger.Error("Failed to gracefully shut down web server", "err", err)
 	} else {

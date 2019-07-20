@@ -43,6 +43,7 @@ func newRemoteSlave(conn *websocket.Conn, master *Master) *remoteSlave {
 			ssInboundBufSize(master.expectedSlaves()),
 			ssOutboundBufSize(master.expectedSlaves()),
 			ssFlushOnStop(true),
+			ssSendCloseMessage(true),
 		),
 		logger:    logging.NewNoopLogger(),
 		state:     slaveConnected,
@@ -85,7 +86,7 @@ func (rs *remoteSlave) eventLoop() {
 	}
 
 	// ask the master to register this slave
-	if err := rs.master.RegisterRemoteSlave(rs); err != nil {
+	if err := rs.registerRemoteSlave(); err != nil {
 		_ = rs.sock.WriteSlaveMsg(slaveMsg{State: slaveRejected, Error: err.Error()})
 		return
 	}
@@ -117,6 +118,14 @@ func (rs *remoteSlave) readID() error {
 	rs.setID(msg.ID)
 	rs.logger.Info("Slave connected")
 	return nil
+}
+
+func (rs *remoteSlave) registerRemoteSlave() error {
+	if err := rs.master.RegisterRemoteSlave(rs); err != nil {
+		return err
+	}
+	// tell the slave it's been accepted
+	return rs.sock.WriteSlaveMsg(slaveMsg{ID: rs.id, State: slaveAccepted})
 }
 
 func (rs *remoteSlave) waitForStart() error {
