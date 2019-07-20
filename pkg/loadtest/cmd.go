@@ -65,7 +65,8 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 				logger.Error(err.Error())
 				os.Exit(1)
 			}
-			if err := startMaster(&cfg); err != nil {
+			master := NewMaster(&cfg, &masterCfg)
+			if err := master.Run(); err != nil {
 				os.Exit(1)
 			}
 		},
