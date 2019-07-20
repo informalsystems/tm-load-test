@@ -10,7 +10,7 @@ import (
 type Config struct {
 	ClientFactory     string   `json:"client_factory"`      // Which client factory should we use for load testing?
 	Connections       int      `json:"connections"`         // The number of WebSockets connections to make to each target endpoint.
-	Time              int      `json:"time"`                // The total time, in seconds, for which to run the load test.
+	Time              int      `json:"time"`                // The total time, in seconds, for which to handle the load test.
 	SendPeriod        int      `json:"send_period"`         // The period (in seconds) at which to send batches of transactions.
 	Rate              int      `json:"rate"`                // The number of transactions to generate, per send period.
 	Size              int      `json:"size"`                // The desired size of each generated transaction, in bytes.
@@ -40,34 +40,34 @@ var validBroadcastTxMethods = map[string]interface{}{
 
 func (c Config) Validate() error {
 	if len(c.ClientFactory) == 0 {
-		return fmt.Errorf("Client factory name must be specified")
+		return fmt.Errorf("client factory name must be specified")
 	}
 	if _, exists := clientFactories[c.ClientFactory]; !exists {
-		return fmt.Errorf("Client factory \"%s\" does not exist", c.ClientFactory)
+		return fmt.Errorf("client factory \"%s\" does not exist", c.ClientFactory)
 	}
 	if c.Connections < 1 {
-		return fmt.Errorf("Expected connections to be >= 1, but was %d", c.Connections)
+		return fmt.Errorf("expected connections to be >= 1, but was %d", c.Connections)
 	}
 	if c.Time < 1 {
-		return fmt.Errorf("Expected load test time to be >= 1 second, but was %d", c.Time)
+		return fmt.Errorf("expected load test time to be >= 1 second, but was %d", c.Time)
 	}
 	if c.SendPeriod < 1 {
-		return fmt.Errorf("Expected transaction send period to be >= 1 second, but was %d", c.SendPeriod)
+		return fmt.Errorf("expected transaction send period to be >= 1 second, but was %d", c.SendPeriod)
 	}
 	if c.Rate < 1 {
-		return fmt.Errorf("Expected transaction rate to be >= 1, but was %d", c.Rate)
+		return fmt.Errorf("expected transaction rate to be >= 1, but was %d", c.Rate)
 	}
 	if c.Size < 40 {
-		return fmt.Errorf("Expected transaction size to be >= 40 bytes, but was %d", c.Size)
+		return fmt.Errorf("expected transaction size to be >= 40 bytes, but was %d", c.Size)
 	}
 	if c.Count < 1 && c.Count != -1 {
-		return fmt.Errorf("Expected max transaction count to either be -1 or >= 1, but was %d", c.Count)
+		return fmt.Errorf("expected max transaction count to either be -1 or >= 1, but was %d", c.Count)
 	}
 	if _, ok := validBroadcastTxMethods[c.BroadcastTxMethod]; !ok {
-		return fmt.Errorf("Expected broadcast_tx method to be one of \"sync\", \"async\" or \"commit\", but was %s", c.BroadcastTxMethod)
+		return fmt.Errorf("expected broadcast_tx method to be one of \"sync\", \"async\" or \"commit\", but was %s", c.BroadcastTxMethod)
 	}
 	if len(c.Endpoints) == 0 {
-		return fmt.Errorf("Expected at least one endpoint to conduct load test against, but found none")
+		return fmt.Errorf("expected at least one endpoint to conduct load test against, but found none")
 	}
 	return nil
 }
@@ -82,13 +82,13 @@ func (c MasterConfig) ToJSON() string {
 
 func (c MasterConfig) Validate() error {
 	if len(c.BindAddr) == 0 {
-		return fmt.Errorf("Master bind address must be specified")
+		return fmt.Errorf("master bind address must be specified")
 	}
 	if c.ExpectSlaves < 1 {
-		return fmt.Errorf("Master expect-slaves must be at least 1, but got %d", c.ExpectSlaves)
+		return fmt.Errorf("master expect-slaves must be at least 1, but got %d", c.ExpectSlaves)
 	}
 	if c.SlaveConnectTimeout < 1 {
-		return fmt.Errorf("Master connect-timeout must be at least 1 second")
+		return fmt.Errorf("master connect-timeout must be at least 1 second")
 	}
 	return nil
 }
@@ -103,10 +103,10 @@ func (c Config) ToJSON() string {
 
 func (c SlaveConfig) Validate() error {
 	if len(c.MasterAddr) == 0 {
-		return fmt.Errorf("Master address must be specified")
+		return fmt.Errorf("master address must be specified")
 	}
 	if c.MasterConnectTimeout < 1 {
-		return fmt.Errorf("Expected connect-timeout to be >= 1, but was %d", c.MasterConnectTimeout)
+		return fmt.Errorf("expected connect-timeout to be >= 1, but was %d", c.MasterConnectTimeout)
 	}
 	return nil
 }

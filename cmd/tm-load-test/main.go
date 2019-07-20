@@ -14,7 +14,7 @@ https://github.com/interchainio/tm-load-test for details.
 To run the application in a similar fashion to tm-bench (STANDALONE mode):
     tm-load-test -c 1 -T 10 -r 1000 -s 250 \
         --broadcast-tx-method async \
-        --endpoints tm-endpoint1.somewhere.com:26657,tm-endpoint2.somewhere.com:26657
+        --endpoints ws://tm-endpoint1.somewhere.com:26657/websocket,ws://tm-endpoint2.somewhere.com:26657/websocket
 
 To run the application in MASTER mode:
     tm-load-test \
@@ -23,7 +23,7 @@ To run the application in MASTER mode:
         --bind localhost:26670 \
         -c 1 -T 10 -r 1000 -s 250 \
         --broadcast-tx-method async \
-        --endpoints tm-endpoint1.somewhere.com:26657,tm-endpoint2.somewhere.com:26657 \
+        --endpoints ws://tm-endpoint1.somewhere.com:26657/websocket,ws://tm-endpoint2.somewhere.com:26657/websocket
 
 To run the application in SLAVE mode:
     tm-load-test slave --master localhost:26680

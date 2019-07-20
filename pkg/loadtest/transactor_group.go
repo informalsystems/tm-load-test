@@ -40,7 +40,7 @@ func (g *TransactorGroup) AddAll(cfg *Config) error {
 	return nil
 }
 
-// Start will run through all transactors and start them.
+// Start will handle through all transactors and start them.
 func (g *TransactorGroup) Start() {
 	for _, t := range g.transactors {
 		t.Start()

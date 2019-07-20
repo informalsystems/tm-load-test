@@ -53,11 +53,11 @@ func NewTransactor(remoteAddr string, config *Config) (*Transactor, error) {
 		return nil, err
 	}
 	if u.Scheme != "ws" && u.Scheme != "wss" {
-		return nil, fmt.Errorf("Unsupported protocol: %s (only ws:// and wss:// are supported)", u.Scheme)
+		return nil, fmt.Errorf("unsupported protocol: %s (only ws:// and wss:// are supported)", u.Scheme)
 	}
 	clientFactory, exists := clientFactories[config.ClientFactory]
 	if !exists {
-		return nil, fmt.Errorf("Unrecognized client factory: %s", config.ClientFactory)
+		return nil, fmt.Errorf("unrecognized client factory: %s", config.ClientFactory)
 	}
 	client, err := clientFactory.NewClient()
 	if err != nil {
@@ -68,7 +68,7 @@ func NewTransactor(remoteAddr string, config *Config) (*Transactor, error) {
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("Failed to connect to remote WebSockets endpoint %s: %s (status code %d)", remoteAddr, resp.Status, resp.StatusCode)
+		return nil, fmt.Errorf("failed to connect to remote WebSockets endpoint %s: %s (status code %d)", remoteAddr, resp.Status, resp.StatusCode)
 	}
 	logger := logging.NewLogrusLogger(fmt.Sprintf("transactor[%s]", u.String()))
 	logger.Info("Connected to remote Tendermint WebSockets RPC")
@@ -94,7 +94,7 @@ func (t *Transactor) Start() {
 // Cancel will indicate to the transactor that it must stop, but does not wait
 // until it has completely stopped. To wait, call the Transactor.Wait() method.
 func (t *Transactor) Cancel() {
-	t.setStop(fmt.Errorf("Transactor operations cancelled"))
+	t.setStop(fmt.Errorf("transactor operations cancelled"))
 }
 
 // Wait will block until the transactor terminates.

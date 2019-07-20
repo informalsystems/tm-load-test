@@ -23,7 +23,7 @@ var clientFactories = map[string]ClientFactory{}
 // factories to easily switch between different ones at runtime.
 func RegisterClientFactory(name string, factory ClientFactory) error {
 	if _, exists := clientFactories[name]; exists {
-		return fmt.Errorf("A client factory with the specified name already exists: %s", name)
+		return fmt.Errorf("client factory with the specified name already exists: %s", name)
 	}
 	clientFactories[name] = factory
 	return nil

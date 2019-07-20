@@ -35,14 +35,13 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 				os.Exit(1)
 			}
 			if err := executeLoadTest(&cfg); err != nil {
-				logger.Error("Failed to execute load test", "err", err)
 				os.Exit(1)
 			}
 		},
 	}
 	rootCmd.PersistentFlags().StringVar(&cfg.ClientFactory, "client-factory", cli.DefaultClientFactory, "The identifier of the client factory to use for generating load testing transactions")
 	rootCmd.PersistentFlags().IntVarP(&cfg.Connections, "connections", "c", 1, "The number of connections to open to each endpoint simultaneously")
-	rootCmd.PersistentFlags().IntVarP(&cfg.Time, "time", "T", 60, "The duration (in seconds) for which to run the load test")
+	rootCmd.PersistentFlags().IntVarP(&cfg.Time, "time", "T", 60, "The duration (in seconds) for which to handle the load test")
 	rootCmd.PersistentFlags().IntVarP(&cfg.SendPeriod, "send-period", "p", 1, "The period (in seconds) at which to send batches of transactions")
 	rootCmd.PersistentFlags().IntVarP(&cfg.Rate, "rate", "r", 1000, "The number of transactions to generate each second")
 	rootCmd.PersistentFlags().IntVarP(&cfg.Size, "size", "s", 250, "The size of each transaction, in bytes - must be greater than 40")
@@ -66,8 +65,9 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 				logger.Error(err.Error())
 				os.Exit(1)
 			}
-			logger.Error("Master mode not yet implemented")
-			os.Exit(1)
+			if err := startMaster(&cfg); err != nil {
+				os.Exit(1)
+			}
 		},
 	}
 	masterCmd.PersistentFlags().StringVar(&masterCfg.BindAddr, "bind", "localhost:26670", "A host:port combination to which to bind the master on which to listen for slave connections")
