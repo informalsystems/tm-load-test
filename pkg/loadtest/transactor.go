@@ -20,6 +20,8 @@ const (
 	connPingPeriod = (30 * 9 / 10) * time.Second
 
 	jsonRPCID = rpctypes.JSONRPCStringID("tm-load-test")
+
+	defaultProgressCallbackInterval = 5 * time.Second
 )
 
 // Transactor represents a single wire-level connection to a Tendermint RPC
@@ -39,6 +41,11 @@ type Transactor struct {
 	startTime time.Time // When did the transaction sending start?
 	txCount   int       // How many transactions have been sent.
 	txRate    float64   // The number of transactions sent, per second.
+
+	progressCallbackMtx      sync.RWMutex
+	progressCallbackID       int                       // A unique identifier for this transactor when calling the progress callback.
+	progressCallbackInterval time.Duration             // How frequently to call the progress update callback.
+	progressCallback         func(id int, txCount int) // Called with the total number of transactions executed so far.
 
 	stopMtx sync.RWMutex
 	stop    bool
@@ -73,13 +80,22 @@ func NewTransactor(remoteAddr string, config *Config) (*Transactor, error) {
 	logger := logging.NewLogrusLogger(fmt.Sprintf("transactor[%s]", u.String()))
 	logger.Info("Connected to remote Tendermint WebSockets RPC")
 	return &Transactor{
-		remoteAddr:        u.String(),
-		config:            config,
-		client:            client,
-		logger:            logger,
-		conn:              conn,
-		broadcastTxMethod: "broadcast_tx_" + config.BroadcastTxMethod,
+		remoteAddr:               u.String(),
+		config:                   config,
+		client:                   client,
+		logger:                   logger,
+		conn:                     conn,
+		broadcastTxMethod:        "broadcast_tx_" + config.BroadcastTxMethod,
+		progressCallbackInterval: defaultProgressCallbackInterval,
 	}, nil
+}
+
+func (t *Transactor) SetProgressCallback(id int, interval time.Duration, callback func(int, int)) {
+	t.progressCallbackMtx.Lock()
+	t.progressCallbackID = id
+	t.progressCallbackInterval = interval
+	t.progressCallback = callback
+	t.progressCallbackMtx.Unlock()
 }
 
 // Start kicks off the transactor's operations in separate goroutines (one for
@@ -103,6 +119,22 @@ func (t *Transactor) Wait() error {
 	t.stopMtx.RLock()
 	defer t.stopMtx.RUnlock()
 	return t.stopErr
+}
+
+// GetTxCount returns the total number of transactions sent thus far by this
+// transactor.
+func (t *Transactor) GetTxCount() int {
+	t.statsMtx.RLock()
+	defer t.statsMtx.RUnlock()
+	return t.txCount
+}
+
+// GetTxRate returns the average number of transactions per second sent by
+// this transactor over the duration of its operation.
+func (t *Transactor) GetTxRate() float64 {
+	t.statsMtx.RLock()
+	defer t.statsMtx.RUnlock()
+	return t.txRate
 }
 
 func (t *Transactor) receiveLoop() {
@@ -137,10 +169,12 @@ func (t *Transactor) sendLoop() {
 	pingTicker := time.NewTicker(connPingPeriod)
 	timeLimitTicker := time.NewTicker(time.Duration(t.config.Time) * time.Second)
 	sendTicker := time.NewTicker(time.Duration(t.config.SendPeriod) * time.Second)
+	progressTicker := time.NewTicker(t.getProgressCallbackInterval())
 	defer func() {
 		pingTicker.Stop()
 		timeLimitTicker.Stop()
 		sendTicker.Stop()
+		progressTicker.Stop()
 	}()
 
 	for {
@@ -153,9 +187,10 @@ func (t *Transactor) sendLoop() {
 			if err := t.sendTransactions(); err != nil {
 				t.logger.Error("Failed to send transactions", "err", err)
 				t.setStop(err)
-			} else {
-				t.logStats()
 			}
+
+		case <-progressTicker.C:
+			t.reportProgress()
 
 		case <-pingTicker.C:
 			if err := t.sendPing(); err != nil {
@@ -255,29 +290,27 @@ func (t *Transactor) trackSentTxs(count int) {
 	}
 }
 
-// GetTxCount returns the total number of transactions sent thus far by this
-// transactor.
-func (t *Transactor) GetTxCount() int {
-	t.statsMtx.RLock()
-	defer t.statsMtx.RUnlock()
-	return t.txCount
-}
-
-// GetTxRate returns the average number of transactions per second sent by
-// this transactor over the duration of its operation.
-func (t *Transactor) GetTxRate() float64 {
-	t.statsMtx.RLock()
-	defer t.statsMtx.RUnlock()
-	return t.txRate
-}
-
-func (t *Transactor) logStats() {
-	t.logger.Info("Statistics", "txCount", t.GetTxCount(), "txRate", fmt.Sprintf("%.3f txs/sec", t.GetTxRate()))
-}
-
 func (t *Transactor) sendPing() error {
 	_ = t.conn.SetWriteDeadline(time.Now().Add(connSendTimeout))
 	return t.conn.WriteMessage(websocket.PingMessage, []byte{})
+}
+
+func (t *Transactor) reportProgress() {
+	txCount := t.GetTxCount()
+	txRate := t.GetTxRate()
+	t.logger.Debug("Statistics", "txCount", txCount, "txRate", fmt.Sprintf("%.3f txs/sec", txRate))
+
+	t.progressCallbackMtx.RLock()
+	defer t.progressCallbackMtx.RUnlock()
+	if t.progressCallback != nil {
+		t.progressCallback(t.progressCallbackID, txCount)
+	}
+}
+
+func (t *Transactor) getProgressCallbackInterval() time.Duration {
+	t.progressCallbackMtx.RLock()
+	defer t.progressCallbackMtx.RUnlock()
+	return t.progressCallbackInterval
 }
 
 func (t *Transactor) close() {

@@ -43,7 +43,7 @@ func newRemoteSlave(conn *websocket.Conn, master *Master) *remoteSlave {
 			ssInboundBufSize(master.expectedSlaves()),
 			ssOutboundBufSize(master.expectedSlaves()),
 			ssFlushOnStop(true),
-			ssSendCloseMessage(true),
+			ssSendCloseMessage(false),
 		),
 		logger:    logging.NewNoopLogger(),
 		state:     slaveConnected,
@@ -70,35 +70,49 @@ func (rs *remoteSlave) StartLoadTest() error {
 // returns any error that may have occurred in communicating the state change
 // to the slave.
 func (rs *remoteSlave) Fail(err string) error {
+	// if the slave's already failed, nothing to do
+	if rs.getState() == slaveFailed {
+		return nil
+	}
 	return rs.sendCtrlMsg(slaveFailed, err)
 }
 
+// Stop will trigger a shutdown notification for this remote slave's event loop.
+func (rs *remoteSlave) Stop() {
+	rs.logger.Debug("Stopping remote slave")
+	close(rs.stop)
+}
+
 func (rs *remoteSlave) eventLoop() {
+	var err error
+
 	defer func() {
 		rs.sock.Stop()
 		close(rs.stopped)
+		rs.logger.Debug("Remote slave event loop shut down")
+		rs.master.UnregisterRemoteSlave(rs.ID(), err)
 	}()
 
 	// the first thing we need to do is get the slave's ID
-	if err := rs.readID(); err != nil {
+	if err = rs.readID(); err != nil {
 		_ = rs.sock.WriteSlaveMsg(slaveMsg{State: slaveFailed, Error: err.Error()})
 		return
 	}
 
 	// ask the master to register this slave
-	if err := rs.registerRemoteSlave(); err != nil {
+	if err = rs.registerRemoteSlave(); err != nil {
 		_ = rs.sock.WriteSlaveMsg(slaveMsg{State: slaveRejected, Error: err.Error()})
 		return
 	}
 
 	// wait until the master indicates that the load test can start, or fail
-	if err := rs.waitForStart(); err != nil {
+	if err = rs.waitForStart(); err != nil {
 		rs.logger.Error("Failed while waiting for load test to start", "err", err)
 		return
 	}
 
 	// receive updates from the slave
-	if err := rs.receiveTestingUpdates(); err != nil {
+	if err = rs.receiveTestingUpdates(); err != nil {
 		rs.logger.Error("Failed while receiving testing updates from slave", "err", err)
 		return
 	}
@@ -121,11 +135,17 @@ func (rs *remoteSlave) readID() error {
 }
 
 func (rs *remoteSlave) registerRemoteSlave() error {
+	rs.logger.Debug("Attempting to register with master")
 	if err := rs.master.RegisterRemoteSlave(rs); err != nil {
 		return err
 	}
-	// tell the slave it's been accepted
-	return rs.sock.WriteSlaveMsg(slaveMsg{ID: rs.id, State: slaveAccepted})
+	cfg := rs.master.config()
+	// tell the slave it's been accepted and give it its configuration
+	return rs.sock.WriteSlaveMsg(slaveMsg{
+		ID:     rs.id,
+		State:  slaveAccepted,
+		Config: &cfg,
+	})
 }
 
 func (rs *remoteSlave) waitForStart() error {
@@ -158,6 +178,7 @@ func (rs *remoteSlave) receiveTestingUpdates() error {
 			}
 
 		case <-updateTicker.C:
+			rs.logger.Debug("Attempting to receive update from remote slave")
 			msg, err := rs.sock.ReadSlaveMsg(slaveUpdateInterval)
 			if err != nil {
 				return fmt.Errorf("failed to read from remote slave: %s", err.Error())
@@ -172,6 +193,7 @@ func (rs *remoteSlave) receiveTestingUpdates() error {
 			}
 
 		case <-rs.stop:
+			rs.logger.Debug("Got update receiver cancellation notification")
 			return fmt.Errorf("update receiver cancelled")
 		}
 	}
@@ -179,6 +201,7 @@ func (rs *remoteSlave) receiveTestingUpdates() error {
 
 // Blocking send operation
 func (rs *remoteSlave) sendCtrlMsg(newState slaveState, errors ...string) error {
+	rs.logger.Debug("Sending control message", "newState", newState)
 	err := ""
 	if len(errors) > 0 {
 		err = errors[0]
@@ -189,11 +212,18 @@ func (rs *remoteSlave) sendCtrlMsg(newState slaveState, errors ...string) error 
 		err:      err,
 		resp:     resp,
 	}
-	resultErr := <-resp
-	if resultErr == nil {
-		rs.state = newState
+	rs.logger.Debug("Waiting for response from control message sent")
+	select {
+	case resultErr := <-resp:
+		if resultErr == nil {
+			rs.state = newState
+		}
+		rs.logger.Debug("Got response", "resultErr", resultErr)
+		return resultErr
+
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("timed out waiting for response for control message")
 	}
-	return resultErr
 }
 
 func (rs *remoteSlave) setID(id string) {
@@ -219,4 +249,10 @@ func (rs *remoteSlave) TxCount() int {
 	rs.mtx.RLock()
 	defer rs.mtx.RUnlock()
 	return rs.txCount
+}
+
+func (rs *remoteSlave) getState() slaveState {
+	rs.mtx.RLock()
+	defer rs.mtx.RUnlock()
+	return rs.state
 }

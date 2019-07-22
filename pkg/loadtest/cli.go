@@ -3,6 +3,8 @@ package loadtest
 import (
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/interchainio/tm-load-test/internal/logging"
 	"github.com/sirupsen/logrus"
@@ -34,6 +36,7 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 				logger.Error(err.Error())
 				os.Exit(1)
 			}
+
 			if err := executeLoadTest(&cfg); err != nil {
 				os.Exit(1)
 			}
@@ -85,11 +88,13 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 				logger.Error(err.Error())
 				os.Exit(1)
 			}
-			logger.Error("Slave mode not yet implemented")
-			os.Exit(1)
+			slave := NewSlave(&slaveCfg)
+			if err := slave.Run(); err != nil {
+				os.Exit(1)
+			}
 		},
 	}
-	slaveCmd.PersistentFlags().StringVar(&slaveCfg.MasterAddr, "master", "localhost:26670", "The host:port on which to find the master node")
+	slaveCmd.PersistentFlags().StringVar(&slaveCfg.MasterAddr, "master", "ws://localhost:26670", "The WebSockets URL on which to find the master node")
 	slaveCmd.PersistentFlags().IntVar(&slaveCfg.MasterConnectTimeout, "connect-timeout", 180, "The maximum number of seconds to keep trying to connect to the master")
 
 	rootCmd.AddCommand(masterCmd)
@@ -112,4 +117,20 @@ func Run(cli *CLIConfig) {
 	if err := buildCLI(cli, logger).Execute(); err != nil {
 		logger.Error("Error", "err", err)
 	}
+}
+
+func trapInterrupts(onKill func(), logger logging.Logger) chan struct {} {
+	sigc := make(chan os.Signal, 1)
+	cancelTrap := make(chan struct{})
+	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-sigc:
+			logger.Info("Caught kill signal")
+			onKill()
+		case <-cancelTrap:
+			return
+		}
+	}()
+	return cancelTrap
 }

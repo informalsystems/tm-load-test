@@ -3,14 +3,16 @@ package loadtest
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/interchainio/tm-load-test/internal/logging"
 )
 
 const (
-	defaultWSReadTimeout  = 10 * time.Second
-	defaultWSWriteTimeout = 10 * time.Second
+	defaultWSReadTimeout  = 3 * time.Second
+	defaultWSWriteTimeout = 3 * time.Second
 	defaultWSPongWait     = 30 * time.Second
 	defaultWSPingPeriod   = (defaultWSPongWait * 9) / 10
 )
@@ -19,15 +21,20 @@ const (
 // connection than that provided by Gorilla. All reads and writes happen within
 // a single goroutine.
 type simpleSocket struct {
-	conn *websocket.Conn
+	conn   *websocket.Conn
+	logger logging.Logger
 
-	flushOnStop      bool
-	sendCloseMessage bool
+	flushOnStop            bool
+	sendCloseMessage       bool
+	waitForRemoteClose     bool
+	remoteCloseWaitTimeout time.Duration
 
-	inbound  chan websocketReadRequest
-	outbound chan websocketWriteRequest
-	stop     chan struct{} // Close this to stop the primary event loop.
-	stopped  chan struct{} // Closed once the event loop terminates.
+	inbound         chan websocketReadRequest
+	outbound        chan websocketWriteRequest
+	stop            chan struct{} // Close this to stop the primary event loop.
+	stopped         chan struct{} // Closed once the event loop terminates.
+	stopReadPump    chan struct{}
+	readPumpStopped chan struct{}
 }
 
 type websocketReadRequest struct {
@@ -48,18 +55,22 @@ type websocketWriteRequest struct {
 }
 
 type simpleSocketConfig struct {
-	inboundBufSize   int  // The maximum size of the inbound message buffer.
-	outboundBufSize  int  // The maximum size of the outbound message buffer.
-	flushOnStop      bool // Should we try to flush any remaining outbound messages when the Run operation is stopped?
-	sendCloseMessage bool // Should we send a close message when the Run operation is stopped?
+	inboundBufSize         int           // The maximum size of the inbound message buffer.
+	outboundBufSize        int           // The maximum size of the outbound message buffer.
+	flushOnStop            bool          // Should we try to flush any remaining outbound messages when the Run operation is stopped?
+	sendCloseMessage       bool          // Should we send a close message when the Run operation is stopped?
+	waitForRemoteClose     bool          // Should we wait for the remote end to close the connection?
+	remoteCloseWaitTimeout time.Duration // If waitForRemoteClose is true, how long should we wait?
 }
 
 func defaultSimpleSocketConfig() *simpleSocketConfig {
 	return &simpleSocketConfig{
-		inboundBufSize:   10,
-		outboundBufSize:  10,
-		flushOnStop:      true,
-		sendCloseMessage: true,
+		inboundBufSize:         10,
+		outboundBufSize:        10,
+		flushOnStop:            true,
+		sendCloseMessage:       true,
+		waitForRemoteClose:     false,
+		remoteCloseWaitTimeout: 60 * time.Second,
 	}
 }
 
@@ -89,19 +100,36 @@ func ssSendCloseMessage(val bool) simpleSocketOpt {
 	}
 }
 
+func ssWaitForRemoteClose(val bool) simpleSocketOpt {
+	return func(cfg *simpleSocketConfig) {
+		cfg.waitForRemoteClose = val
+	}
+}
+
+func ssRemoteCloseWaitTimeout(timeout time.Duration) simpleSocketOpt {
+	return func(cfg *simpleSocketConfig) {
+		cfg.remoteCloseWaitTimeout = timeout
+	}
+}
+
 func newSimpleSocket(conn *websocket.Conn, opts ...simpleSocketOpt) *simpleSocket {
 	cfg := defaultSimpleSocketConfig()
 	for _, opt := range opts {
 		opt(cfg)
 	}
 	return &simpleSocket{
-		conn:             conn,
-		inbound:          make(chan websocketReadRequest, cfg.inboundBufSize),
-		outbound:         make(chan websocketWriteRequest, cfg.outboundBufSize),
-		stop:             make(chan struct{}, 1),
-		stopped:          make(chan struct{}, 1),
-		flushOnStop:      cfg.flushOnStop,
-		sendCloseMessage: cfg.sendCloseMessage,
+		conn:                   conn,
+		logger:                 logging.NewLogrusLogger("simplesocket"),
+		inbound:                make(chan websocketReadRequest, cfg.inboundBufSize),
+		outbound:               make(chan websocketWriteRequest, cfg.outboundBufSize),
+		stop:                   make(chan struct{}, 1),
+		stopped:                make(chan struct{}, 1),
+		stopReadPump:           make(chan struct{}, 1),
+		readPumpStopped:        make(chan struct{}, 1),
+		flushOnStop:            cfg.flushOnStop,
+		sendCloseMessage:       cfg.sendCloseMessage,
+		waitForRemoteClose:     cfg.waitForRemoteClose,
+		remoteCloseWaitTimeout: cfg.remoteCloseWaitTimeout,
 	}
 }
 
@@ -117,20 +145,72 @@ func (s *simpleSocket) Run() {
 	pingTicker := time.NewTicker(defaultWSPingPeriod)
 	defer pingTicker.Stop()
 
-	s.conn.SetPongHandler(func(appData string) error { _ = s.conn.SetReadDeadline(time.Now().Add(defaultWSPongWait)); return nil })
+	connClosed := make(chan struct{}, 1)
+	connErr := make(chan error, 1)
+	s.conn.SetPingHandler(func(appData string) error {
+		s.logger.Debug("Sending PONG")
+		err := s.conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(defaultWSPongWait))
+		if err == websocket.ErrCloseSent {
+			return nil
+		} else if e, ok := err.(net.Error); ok && e.Temporary() {
+			return nil
+		}
+		connErr <- err
+		return err
+	})
+	s.conn.SetPongHandler(func(appData string) error {
+		s.logger.Debug("Reading PONG")
+		_ = s.conn.SetReadDeadline(time.Now().Add(defaultWSPongWait))
+		return nil
+	})
+	s.conn.SetCloseHandler(func(code int, text string) error {
+		s.logger.Debug("Connection closed")
+		message := websocket.FormatCloseMessage(code, "")
+		_ = s.conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(defaultWSWriteTimeout))
+		close(connClosed)
+		return nil
+	})
+
+	go s.readPump()
+	defer func() {
+		close(s.stopReadPump)
+		<-s.readPumpStopped
+	}()
+
+	for {
+		select {
+		case req := <-s.outbound:
+			s.logger.Debug("Attempting to write to WebSocket", "data", string(req.data), "timeout", req.timeout.String())
+			s.handleWrite(req)
+
+		case <-pingTicker.C:
+			s.logger.Debug("Sending PING")
+			_ = s.conn.WriteMessage(websocket.PingMessage, nil)
+
+		case <-s.stop:
+			s.logger.Debug("Got cancellation notification")
+			return
+
+		case <-connClosed:
+			s.logger.Info("Connection closed")
+			return
+
+		case err := <-connErr:
+			s.logger.Error("Connection error", "err", err)
+			return
+		}
+	}
+}
+
+func (s *simpleSocket) readPump() {
+	defer close(s.readPumpStopped)
 
 	for {
 		select {
 		case req := <-s.inbound:
 			s.handleRead(req)
 
-		case req := <-s.outbound:
-			s.handleWrite(req)
-
-		case <-pingTicker.C:
-			_ = s.conn.WriteMessage(websocket.PingMessage, nil)
-
-		case <-s.stop:
+		case <-s.stopReadPump:
 			return
 		}
 	}
@@ -147,8 +227,13 @@ func (s *simpleSocket) Read(timeouts ...time.Duration) (int, []byte, error) {
 		resp:    make(chan websocketReadResponse, 1),
 	}
 	s.inbound <- req
-	resp := <-req.resp
-	return resp.mt, resp.data, resp.err
+	select {
+	case resp := <-req.resp:
+		return resp.mt, resp.data, resp.err
+
+	case <-time.After(timeout + (100 * time.Millisecond)):
+		return 0, nil, fmt.Errorf("timed out waiting for websocket read to complete")
+	}
 }
 
 func (s *simpleSocket) ReadSlaveMsg(timeouts ...time.Duration) (slaveMsg, error) {
@@ -176,7 +261,13 @@ func (s *simpleSocket) Write(data []byte, timeouts ...time.Duration) error {
 		resp:    make(chan error, 1),
 	}
 	s.outbound <- req
-	return <-req.resp
+	select {
+	case err := <-req.resp:
+		return err
+
+	case <-time.After(timeout + (100 * time.Millisecond)):
+		return fmt.Errorf("timed out waiting for websocket write to complete")
+	}
 }
 
 func (s *simpleSocket) WriteSlaveMsg(msg slaveMsg, timeouts ...time.Duration) error {
@@ -194,6 +285,7 @@ func (s *simpleSocket) Stop() {
 }
 
 func (s *simpleSocket) handleRead(req websocketReadRequest) {
+	// try to read a message
 	deadline := time.Now().Add(req.timeout)
 	_ = s.conn.SetReadDeadline(deadline)
 	mt, data, err := s.conn.ReadMessage()
@@ -211,13 +303,23 @@ func (s *simpleSocket) handleWrite(req websocketWriteRequest) {
 }
 
 func (s *simpleSocket) close() {
+	s.logger.Debug("Closing WebSocket connection")
 	if s.flushOnStop {
 		remaining := len(s.outbound)
+		s.logger.Debug("Flushing messages", "remaining", remaining)
 		for i := 0; i < remaining; i++ {
 			s.handleWrite(<-s.outbound)
 		}
+		s.logger.Debug("Finished flushing remaining messages")
 	}
 	if s.sendCloseMessage {
 		_ = s.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		s.logger.Debug("Wrote WebSocket close message")
+	}
+	if s.waitForRemoteClose {
+		s.logger.Debug("Waiting for remote end to close the connection")
+		_ = s.conn.SetReadDeadline(time.Now().Add(s.remoteCloseWaitTimeout))
+		_, _, err := s.conn.ReadMessage()
+		s.logger.Debug("Wait complete", "err", err)
 	}
 }

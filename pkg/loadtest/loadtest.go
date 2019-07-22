@@ -1,10 +1,6 @@
 package loadtest
 
 import (
-	"os"
-	"os/signal"
-	"syscall"
-
 	"github.com/interchainio/tm-load-test/internal/logging"
 )
 
@@ -19,7 +15,7 @@ func executeLoadTest(cfg *Config) error {
 	tg.Start()
 
 	// we want to know if the user hits Ctrl+Break
-	cancelTrap := trapInterrupts(tg, logger)
+	cancelTrap := trapInterrupts(func() { tg.Cancel() }, logger)
 	defer close(cancelTrap)
 
 	if err := tg.Wait(); err != nil {
@@ -28,20 +24,4 @@ func executeLoadTest(cfg *Config) error {
 	}
 	logger.Info("Load test complete!")
 	return nil
-}
-
-func trapInterrupts(tg *TransactorGroup, logger logging.Logger) chan struct {} {
-	sigc := make(chan os.Signal, 1)
-	cancelTrap := make(chan struct{})
-	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		select {
-		case <-sigc:
-			logger.Info("Caught kill signal")
-			tg.Cancel()
-		case <-cancelTrap:
-			return
-		}
-	}()
-	return cancelTrap
 }
