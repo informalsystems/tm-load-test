@@ -1,5 +1,0 @@
----
-- hosts: tendermint
-  become: yes
-  roles:
-    - tendermint
