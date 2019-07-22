@@ -3,7 +3,13 @@
 # tm-load-test
 
 `tm-load-test` is a distributed load testing tool (and framework) for load
-testing [Tendermint](https://tendermint.com/) networks.
+testing [Tendermint](https://tendermint.com/) networks and aims to effectively
+be the successor to [`tm-bench`](https://github.com/tendermint/tendermint/tree/master/tools/tm-bench).
+
+Naturally, any  transactions sent to a Tendermint network are specific to the
+ABCI application running on that network. As such, the `tm-load-test` tool comes
+with built-in support for the `kvstore` ABCI application, but you can
+[build your own clients](./pkg/loadtest/README.md) for your own apps.
 
 ## Requirements
 In order to build and use the tools, you will need:
@@ -19,97 +25,64 @@ make
 ```
 
 ## Usage
-
-`tm-load-test` requires the use of a TOML-based configuration file to execute a
-load test. See the [examples](./examples/) folder for some examples, where the
-comments in each example explain what each parameter means.
-
-This application can operate in either **standalone**, or **master/slave** mode.
+`tm-load-test` can be executed in one of two modes: **standalone**, or
+**master/slave**.
 
 ### Standalone Mode
-By default, `tm-load-test` is a distributed load testing tool, but to run a load
-test locally (which internally creates a single master and slave node, ignoring
-the `master.expect_slaves` and `slave.master` parameters in your configuration
-file):
+In standalone mode, `tm-load-test` operates in a similar way to `tm-bench`:
 
 ```bash
-# Initialize your local Tendermint node to ~/.tendermint
-tendermint init
-# Run a node with the kvstore proxy app
-tendermint node --proxy_app kvstore
+tm-load-test -c 1 -T 10 -r 1000 -s 250 \
+    --broadcast-tx-method async \
+    --endpoints ws://tm-endpoint1.somewhere.com:26657/websocket,ws://tm-endpoint2.somewhere.com:26657/websocket
+```
 
-# Run the load test in standalone mode with the given configuration (-v sets
-# output logging to DEBUG level)
-./build/tm-load-test -c examples/load-test.toml -mode standalone -v
+To see a description of what all of the parameters mean, simply run:
+
+```bash
+tm-load-test --help
 ```
 
 ### Master/Slave Mode
-The [`load-test.toml`](./examples/load-test.toml) example demonstrates usage
-with the following configuration:
+In master/slave mode, which is best used for large-scale, distributed load 
+testing, `tm-load-test` allows you to have multiple slave machines connect to
+a single master to obtain their configuration and coordinate their operation.
 
-* A single Tendermint node with RPC endpoint available at `localhost:26657`
-* The load testing master bound to `localhost:26670`
-* 2 slaves bound to arbitrary ports on `localhost`
-* Each slave spawns 50 clients
-* Each client executes 100 interactions with the Tendermint node
+The master acts as a simple WebSockets host, and the slaves are WebSockets
+clients.
 
-To run the example test, simply do the following from the folder into which you
-cloned the `tm-load-test` source:
+On the master machine:
 
 ```bash
-# Initialize your local Tendermint node to ~/.tendermint
-tendermint init
-# Run a node with the kvstore proxy app
-tendermint node --proxy_app kvstore
-
-# Run each of the following in a separate terminal (-v sets output logging to
-# DEBUG level)
-./build/tm-load-test -c examples/load-test.toml -mode master -v
-./build/tm-load-test -c examples/load-test.toml -mode slave -v
-./build/tm-load-test -c examples/load-test.toml -mode slave -v
+# Run tm-load-test with similar parameters to the standalone mode, but now 
+# specifying the number of slaves to expect (--expect-slaves) and the host:port
+# to which to bind (--bind) and listen for incoming slave requests.
+tm-load-test \
+    master \
+    --expect-slaves 2 \
+    --bind localhost:26670 \
+    -c 1 -T 10 -r 1000 -s 250 \
+    --broadcast-tx-method async \
+    --endpoints ws://tm-endpoint1.somewhere.com:26657/websocket,ws://tm-endpoint2.somewhere.com:26657/websocket
 ```
 
-And then watch the output logs to see the load testing progress.
-
-Alternatively, there is a `run.sh` script provided in the `examples` folder that
-will help with executing load tests where 1 master and 2 slaves are required. To
-run the examples for this, simply do the following:
+On each slave machine:
 
 ```bash
-# For a fresh Tendermint setup
-tendermint init
-tendermint node --proxy_app kvstore
-
-# Runs 2 slaves in the background and the master in the foreground, so you can
-# easily kill the load test (Ctrl+C)
-./examples/run.sh examples/load-test.toml
+# Just tell the slave where to find the master - it will figure out the rest.
+tm-load-test slave --master localhost:26680
 ```
 
-## Load Testing Clients
-There are 2 [clients](./pkg/loadtest/clients/) provided at present, both of
-which require the `kvstore` or `persistent_kvstore` ABCI apps running on your
-Tendermint network:
+For more help, see the command line parameters' descriptions:
 
-* `kvstore-http` - Allows for load testing via the standard Tendermint RPC
-  client (which interacts over HTTP, with a separate HTTP request for each
-  interaction).
-* `kvstore-websockets` - Allows for load testing via the Tendermint WebSockets
-  RPC interface. Note that this requires the use of Tendermint's event
-  subscription subsystem, which means that you can have a maximum of 99 clients
-  per Tendermint node before your slaves will start failing. Each spawned load
-  testing client will create a separate WebSockets connection to a single random
-  target node.
-
-See the [examples](./examples/) folder for examples of load testing
-configuration files that make use of each of these client types.
+```bash
+tm-load-test master --help
+tm-load-test slave --help
+```
 
 ### Customizing
 To implement your own client type to load test your own Tendermint ABCI
 application, see the [`loadtest` package docs here](./pkg/loadtest/README.md).
-
-## Outage Simulation
-See the [`tm-outage-sim-server`](./cmd/tm-outage-sim-server/) folder for
-documentation regarding the controlled simulation of Tendermint node "outages".
 
 ## Development
 To run the linter and the tests:
