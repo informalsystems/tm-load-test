@@ -1,7 +1,7 @@
 # Changelog
 
 ## v0.4.0
-* [\#20](https://github.com/interchainio/tm-load-test/pull/14) - Significant
+* [\#20](https://github.com/interchainio/tm-load-test/pull/20) - Significant
   refactor of the underlying codebase to radically simplify the code and make
   its usage easier and more closely aligned with `tm-bench`.
 
