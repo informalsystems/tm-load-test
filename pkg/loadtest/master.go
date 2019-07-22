@@ -1,693 +1,334 @@
 package loadtest
 
 import (
+	"context"
 	"fmt"
-	"math/rand"
 	"net/http"
-	"net/url"
-	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/interchainio/tm-load-test/internal/logging"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/tendermint/tendermint/rpc/client"
-	"golang.org/x/crypto/bcrypt"
 )
 
-// The maximum number of failures to tolerate when attempting to query for peers
-// from a Tendermint seed node before failing the master.
-const defaultSeedPollMaxFailures = 5
+const masterShutdownTimeout = 10 * time.Second
 
-// Master is an entity that coordinates the load testing across multiple slave
-// nodes, tracking progress and failures.
+// Master is a WebSockets server that allows slaves to connect to it to obtain
+// configuration information. It does nothing but coordinate load testing
+// amongst the slaves.
 type Master struct {
-	cfg    *Config
-	logger logging.Logger
+	cfg       *Config
+	masterCfg *MasterConfig
+	logger    logging.Logger
 
-	svr *baseServer
+	svr        *http.Server  // The HTTP/WebSockets server.
+	svrStopped chan struct{} // Closed when the WebSockets server has shut down.
 
-	mtx                  sync.Mutex
-	summary              *Summary
-	startTime            time.Time
-	slaves               map[string]*remoteSlave
-	flagKill             bool
-	shutdownErr          error
-	expectedInteractions int64
-	targets              map[string]TestNetworkTargetConfig // For autodetection
+	slaves map[string]*remoteSlave // Registered remote slaves.
 
-	// For tracking HTTP long polling requests that're waiting for the go-ahead
-	// to start testing.
-	readySubscribers map[int]chan bool
+	slaveRegister   chan remoteSlaveRegisterRequest   // Send a request here to register a remote slave.
+	slaveUnregister chan remoteSlaveUnregisterRequest // Send a request here to unregister a remote slave.
+	slaveUpdate     chan slaveMsg
+	stop            chan struct{}
 
-	slavec chan slaveRequest
-
-	outageSim     *OutageSimulator
-	outageSimErrc chan error
+	// Rudimentary statistics
+	startTime          time.Time
+	lastProgressUpdate time.Time
+	totalTxs           int
 }
 
-type slaveRequest struct {
-	slave remoteSlave
-	errc  chan error
+type remoteSlaveRegisterRequest struct {
+	rs   *remoteSlave
+	resp chan error
 }
 
-type stillWaitingForTargets struct{}
-type stillWaitingForSlaves struct{}
+type remoteSlaveUnregisterRequest struct {
+	id  string // The ID of the slave to unregister.
+	err error  // If any error occurred during the slave's life cycle.
+}
 
-var _ error = (*stillWaitingForTargets)(nil)
-var _ error = (*stillWaitingForSlaves)(nil)
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+}
 
-// NewMaster instantiates a new master node for load testing.
-func NewMaster(cfg *Config) (*Master, error) {
+func NewMaster(cfg *Config, masterCfg *MasterConfig) *Master {
 	logger := logging.NewLogrusLogger("master")
-	m := &Master{
-		cfg:                  cfg,
-		logger:               logger,
-		summary:              &Summary{},
-		slaves:               make(map[string]*remoteSlave),
-		expectedInteractions: int64(cfg.Master.ExpectSlaves) * int64(cfg.Clients.Spawn) * int64(cfg.Clients.MaxInteractions),
-		readySubscribers:     make(map[int]chan bool),
-		slavec:               make(chan slaveRequest, cfg.Master.ExpectSlaves),
-		targets:              cfg.TestNetwork.TargetsAsMap(),
-		outageSimErrc:        make(chan error, 1),
-	}
-	if cfg.Clients.MaxInteractions == -1 {
-		m.expectedInteractions = -1
-	}
-	if m.expectedInteractions < -1 {
-		return nil, NewError(ErrInvalidConfig, nil, "total expected interactions must be -1 or greater than or equal to 0")
+	master := &Master{
+		cfg:             cfg,
+		masterCfg:       masterCfg,
+		logger:          logger,
+		svrStopped:      make(chan struct{}, 1),
+		slaves:          make(map[string]*remoteSlave),
+		slaveRegister:   make(chan remoteSlaveRegisterRequest, masterCfg.ExpectSlaves),
+		slaveUnregister: make(chan remoteSlaveUnregisterRequest, masterCfg.ExpectSlaves),
+		slaveUpdate:     make(chan slaveMsg, masterCfg.ExpectSlaves),
+		stop:            make(chan struct{}, 1),
 	}
 	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.Handler())
-	mux.HandleFunc("/slave", m.handleSlaveRequest)
-	svr, err := newBaseServer(cfg.Master.Bind, mux, logger)
-	if err != nil {
-		return nil, err
+	mux.HandleFunc("/", master.newWebSocketHandler())
+	svr := &http.Server{
+		Addr:    masterCfg.BindAddr,
+		Handler: mux,
 	}
-	m.svr = svr
-	// set the random seed for generating readiness subscriber IDs
-	rand.Seed(time.Now().UnixNano())
-	m.logger.Debug("Created master", "expectedInteractions", m.expectedInteractions)
-	return m, nil
+	master.svr = svr
+	return master
 }
 
-// Run executes the entire load test synchronously, exiting only once the load
-// test completes or fails.
-func (m *Master) Run() (*Summary, error) {
-	if err := m.svr.start(); err != nil {
-		return nil, NewError(ErrMasterFailed, err)
-	}
-	defer m.shutdown()
-
-	if m.cfg.TestNetwork.Autodetect.Enabled {
-		if err := m.pollForTargets(); err != nil {
-			return nil, m.fail(err)
+// Run will execute the master's operations in a blocking manner, returning
+// any error that causes one of the slaves or the master to fail.
+func (m *Master) Run() error {
+	defer func() {
+		// stop all remote slave event loops
+		m.stopRemoteSlaves()
+		// gracefully shut down the WebSockets server
+		m.shutdownServer()
+		select {
+		case <-m.svrStopped:
+		case <-time.After(masterShutdownTimeout):
+			m.logger.Error("Failed to shut down within the required time period")
 		}
-	}
+	}()
+
+	// we want to know if the user hits Ctrl+Break
+	cancelTrap := trapInterrupts(func() { close(m.stop) }, m.logger)
+	defer close(cancelTrap)
+
+	// we run the WebSockets server in the background
+	go m.runServer()
 
 	if err := m.waitForSlaves(); err != nil {
-		return nil, m.fail(err)
-	}
-
-	if m.cfg.TestNetwork.OutageSim.Enabled {
-		if err := m.startOutageSim(); err != nil {
-			return nil, m.fail(err)
-		}
-	}
-
-	if err := m.doLoadTest(); err != nil {
-		m.fail(err) // nolint: errcheck
-	}
-
-	if m.getShutdownErr() == nil && m.cfg.Master.WaitAfterFinished > 0 {
-		m.logger.Info(
-			"Waiting predefined time period after completion of testing",
-			"duration",
-			m.cfg.Master.WaitAfterFinished.Duration().String(),
-		)
-		time.Sleep(m.cfg.Master.WaitAfterFinished.Duration())
-	}
-
-	return m.getSummary(), m.getShutdownErr()
-}
-
-func (m *Master) pollForTargets() error {
-	m.logger.Info("Polling for targets", "seedNode", m.cfg.TestNetwork.Autodetect.SeedNode)
-	killCheckTicker := time.NewTicker(100 * time.Millisecond)
-	defer killCheckTicker.Stop()
-	seedPollTicker := time.NewTicker(2 * time.Second)
-	defer seedPollTicker.Stop()
-	seedPollTimeout := time.NewTicker(m.cfg.TestNetwork.Autodetect.ExpectTargetsWithin.Duration())
-	defer seedPollTimeout.Stop()
-
-	c := client.NewHTTP(m.cfg.TestNetwork.Autodetect.SeedNode.String(), "/websocket")
-	defer c.Stop() // nolint: errcheck
-	errCount := 0
-
-	for {
-		select {
-		// if a slave tries to connect while we're still trying to gather
-		// targets
-		case req := <-m.slavec:
-			req.errc <- &stillWaitingForTargets{}
-
-		case <-seedPollTicker.C:
-			err := m.querySeedForTargets(c)
-			if err != nil {
-				errCount++
-				m.logger.Debug("Failed to query seed node", "err", err, "errCount", errCount)
-				if errCount > defaultSeedPollMaxFailures {
-					return NewError(ErrMasterFailed, err, fmt.Sprintf("more than %d failures while attempting to query seed node for targets", defaultSeedPollMaxFailures))
-				}
-			}
-			if m.allTargetsPresent() {
-				m.logger.Info("Discovered all necessary targets for load testing", "count", m.cfg.TestNetwork.Autodetect.ExpectTargets)
-				m.logTargets()
-				return nil
-			}
-
-		case <-seedPollTimeout.C:
-			return NewError(
-				ErrMasterFailed,
-				nil,
-				fmt.Sprintf(
-					"failed to find %d target nodes within %s",
-					m.cfg.TestNetwork.Autodetect.ExpectTargets,
-					m.cfg.TestNetwork.Autodetect.ExpectTargetsWithin.Duration().String(),
-				),
-			)
-
-		case <-killCheckTicker.C:
-			if m.killed() {
-				return NewError(ErrMasterFailed, nil, "master killed")
-			}
-		}
-	}
-}
-
-func (m *Master) querySeedForTargets(c *client.HTTP) error {
-	info, err := c.NetInfo()
-	if err != nil {
+		m.failAllRemoteSlaves(err.Error())
 		return err
 	}
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	for _, peer := range info.Peers {
-		peerURL, err := url.Parse(peer.NodeInfo.Other.RPCAddress)
-		if err != nil {
-			m.logger.Debug("Unrecognized peer RPC address format", "rpcAddress", peer.NodeInfo.Other.RPCAddress, "err", err)
-			continue
-		}
-		m.targets[peer.RemoteIP] = TestNetworkTargetConfig{
-			ID:  peer.NodeInfo.Moniker,
-			URL: fmt.Sprintf("%s://%s:%s", peerURL.Scheme, peer.RemoteIP, peerURL.Port()),
-		}
+
+	if err := m.receiveTestingUpdates(); err != nil {
+		m.failAllRemoteSlaves(err.Error())
+		return err
 	}
-	if m.cfg.TestNetwork.Autodetect.TargetSeedNode {
-		m.targets[m.cfg.TestNetwork.Autodetect.SeedNode.String()] = TestNetworkTargetConfig{
-			ID:  "seed_node",
-			URL: m.cfg.TestNetwork.Autodetect.SeedNode.String(),
-		}
-	}
-	m.logger.Debug("Got response from seed node", "targetCount", len(m.targets))
+
 	return nil
 }
 
-func (m *Master) allTargetsPresent() bool {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	return len(m.targets) >= m.cfg.TestNetwork.Autodetect.ExpectTargets
-}
-
-func (m *Master) logTargets() {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	i := 0
-	for _, target := range m.targets {
-		m.logger.Info(fmt.Sprintf("Target %d", i), "url", target.URL, "id", target.ID)
-		i++
-	}
-}
-
-func (m *Master) getTargets() []TestNetworkTargetConfig {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	targets := make([]TestNetworkTargetConfig, 0)
-	for _, target := range m.targets {
-		targets = append(targets, target)
-	}
-	return targets
-}
-
 func (m *Master) waitForSlaves() error {
-	slavesConnected := make(chan struct{})
-	killc := make(chan struct{})
-	go func() {
-		killCheckTicker := time.NewTicker(100 * time.Millisecond)
-	connectLoop:
-		for {
-			select {
-			case msg := <-m.slavec:
-				msg.errc <- m.addSlave(&msg.slave)
-				if m.ready() {
-					m.logger.Info("All expected slaves have connected", "count", len(m.slaves))
-					m.broadcastReady()
-					m.trackStartTime()
-					break connectLoop
-				}
+	m.logger.Info("Waiting for all slaves to connect and register")
+	timeoutTicker := time.NewTicker(time.Duration(m.masterCfg.SlaveConnectTimeout) * time.Second)
+	defer timeoutTicker.Stop()
 
-			case <-killCheckTicker.C:
-				if m.killed() {
-					break connectLoop
-				}
-
-			case <-killc:
-				break connectLoop
-			}
-		}
-		close(slavesConnected)
-	}()
-	// we have a deadline for the slaves to all connect
-	select {
-	case <-slavesConnected:
-		return nil
-
-	case <-time.After(m.cfg.Master.ExpectSlavesWithin.Duration()):
-		// force the goroutine to terminate
-		close(killc)
-		<-slavesConnected
-		return NewError(ErrTimedOutWaitingForSlaves, nil)
-	}
-}
-
-func (m *Master) doLoadTest() error {
-	killCheckTicker := time.NewTicker(100 * time.Millisecond)
-	defer killCheckTicker.Stop()
-	progressTicker := time.NewTicker(5 * time.Second)
-	defer progressTicker.Stop()
 	for {
 		select {
-		case msg := <-m.slavec:
-			if err := m.handleMsgDuringTesting(msg); err != nil {
-				return err
-			}
-			if m.done() {
-				m.logger.Info("All slaves are finished with testing")
-				m.computeFinalStats()
-				return nil
+		case req := <-m.slaveRegister:
+			req.resp <- m.registerRemoteSlave(req.rs)
+			if len(m.slaves) >= m.masterCfg.ExpectSlaves {
+				return m.startLoadTest()
 			}
 
-		case <-killCheckTicker.C:
-			if m.killed() {
-				return NewError(ErrMasterFailed, nil, "master killed")
+		case req := <-m.slaveUnregister:
+			// we can do this safely here without jeopardising the load testing
+			m.unregisterRemoteSlave(req.id)
+
+		case <-timeoutTicker.C:
+			return fmt.Errorf("timed out waiting for all slaves to connect")
+
+		case <-m.stop:
+			return fmt.Errorf("wait routine cancelled")
+		}
+	}
+}
+
+func (m *Master) receiveTestingUpdates() error {
+	m.logger.Info("Watching for slave updates")
+	completed := 0
+
+	progressTicker := time.NewTicker(5 * time.Second)
+	defer progressTicker.Stop()
+
+	m.startTime = time.Now()
+	m.lastProgressUpdate = m.startTime
+
+	for {
+		select {
+		case msg := <-m.slaveUpdate:
+			m.logger.Debug("Got update from slave", "msg", msg)
+			if _, exists := m.slaves[msg.ID]; !exists {
+				m.logger.Error("Got message from unregistered slave - ignoring", "id", msg.ID)
+				continue
+			}
+
+			switch msg.State {
+			case slaveTesting:
+				m.logger.Debug("Update from remote slave", "id", msg.ID, "txCount", msg.TxCount)
+
+			case slaveCompleted:
+				completed++
+				if completed >= m.masterCfg.ExpectSlaves {
+					m.logger.Debug("Slave completed its testing", "id", msg.ID)
+					return nil
+				}
+
+			case slaveFailed:
+				return fmt.Errorf(msg.Error)
+
+			default:
+				return fmt.Errorf("unexpected state from remote slave: %s", msg.State)
+			}
+
+		case req := <-m.slaveUnregister:
+			m.unregisterRemoteSlave(req.id)
+			if req.err != nil {
+				return fmt.Errorf("remote slave failed: %s", req.err.Error())
 			}
 
 		case <-progressTicker.C:
-			m.logProgress()
+			m.logTestingProgress()
+
+		case <-m.stop:
+			m.logger.Debug("Load testing cancel signal received")
+			return fmt.Errorf("load testing cancelled")
 		}
 	}
 }
 
-func (m *Master) logProgress() {
-	if m.cfg.Clients.MaxInteractions == -1 {
-		m.logTimeProgress()
-	} else {
-		m.logInteractionProgress()
+func (m *Master) RegisterRemoteSlave(rs *remoteSlave) error {
+	m.logger.Debug("Attempting to register remote slave")
+	resp := make(chan error, 1)
+	m.slaveRegister <- remoteSlaveRegisterRequest{
+		rs:   rs,
+		resp: resp,
+	}
+	select {
+	case err := <-resp:
+		return err
+
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("timed out while attempting to register remote slave")
 	}
 }
 
-func (m *Master) logTimeProgress() {
-	interactions := m.countInteractions()
-	if interactions == 0 {
-		return
+func (m *Master) registerRemoteSlave(rs *remoteSlave) error {
+	m.logger.Debug("Attempting to register remote slave", "id", rs.ID())
+	if len(m.slaves) >= m.masterCfg.ExpectSlaves {
+		return fmt.Errorf("too many slaves")
 	}
-	totalSeconds := m.timeSinceStart().Seconds()
-	expectedTestTime := m.cfg.Clients.MaxTestTime.Duration().Seconds()
-	progress := float64(0)
-	ips := float64(0)
-	if totalSeconds > 0 {
-		ips = float64(interactions) / totalSeconds
-		progress = float64(100) * totalSeconds / expectedTestTime
+	id := rs.ID()
+	if _, exists := m.slaves[id]; exists {
+		return fmt.Errorf("slave with ID %s already exists", id)
 	}
-	timeLeft := time.Duration(int64((expectedTestTime-totalSeconds)*1000)) * time.Millisecond
+	m.slaves[id] = rs
+	m.logger.Info("Added remote slave", "id", id)
+	return nil
+}
+
+func (m *Master) UnregisterRemoteSlave(id string, err error) {
+	m.slaveUnregister <- remoteSlaveUnregisterRequest{id: id, err: err}
+}
+
+func (m *Master) unregisterRemoteSlave(id string) {
+	delete(m.slaves, id)
+	m.logger.Info("Unregistered slave", "id", id)
+}
+
+func (m *Master) ReceiveSlaveUpdate(msg slaveMsg) {
+	m.slaveUpdate <- msg
+}
+
+func (m *Master) logTestingProgress() {
+	totalTxs := 0
+	for _, rs := range m.slaves {
+		totalTxs += rs.TxCount()
+	}
+	overallElapsed := time.Since(m.startTime).Seconds()
+	elapsed := time.Since(m.lastProgressUpdate).Seconds()
+
+	overallAvgRate := float64(0)
+	avgRate := float64(0)
+
+	if overallElapsed > 0 {
+		overallAvgRate = float64(totalTxs) / overallElapsed
+	}
+	if elapsed > 0 {
+		avgRate = float64(totalTxs-m.totalTxs) / elapsed
+	}
+
 	m.logger.Info(
 		"Progress",
-		"interactions", interactions,
-		"progress", fmt.Sprintf("%.1f%%", progress),
-		"interactionsPerSec", fmt.Sprintf("%.1f", ips),
-		"timeLeft", timeLeft.String(),
+		"totalTxs", totalTxs,
+		"overallAvgRate", fmt.Sprintf("%.2f txs/sec", overallAvgRate),
+		"avgRate", fmt.Sprintf("%.2f txs/sec", avgRate),
 	)
+
+	m.totalTxs = totalTxs
+	m.lastProgressUpdate = time.Now()
 }
 
-func (m *Master) logInteractionProgress() {
-	interactions := m.countInteractions()
-	if interactions == 0 {
-		return
-	}
-	expectedInteractions := float64(m.getExpectedInteractions())
-	progress := float64(100) * float64(interactions) / expectedInteractions
-	totalSeconds := m.timeSinceStart().Seconds()
-	ips := float64(0)
-	if totalSeconds > 0 {
-		ips = float64(interactions) / totalSeconds
-	}
-	// extrapolate to try to find how long left for the test
-	expectedTotalSeconds := float64(0)
-	if ips > 0 {
-		expectedTotalSeconds = expectedInteractions / ips
-	}
-	timeLeft := time.Duration(int64(expectedTotalSeconds-totalSeconds)*1000) * time.Millisecond
-	m.logger.Info(
-		"Progress",
-		"interactions", interactions,
-		"progress", fmt.Sprintf("%.1f%%", progress),
-		"interactionsPerSec", fmt.Sprintf("%.1f", ips),
-		"estTimeLeft", timeLeft.String(),
-	)
-}
-
-func (m *Master) timeSinceStart() time.Duration {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	return time.Since(m.startTime)
-}
-
-func (m *Master) countInteractions() int64 {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-
-	var count int64
-	for _, slave := range m.slaves {
-		count += slave.Interactions
-	}
-	return count
-}
-
-func (m *Master) computeFinalStats() {
-	interactions := m.countInteractions()
-
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-
-	m.summary.Interactions = interactions
-	m.summary.TotalTestTime = time.Since(m.startTime)
-}
-
-func (m *Master) handleMsgDuringTesting(msg slaveRequest) error {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-
-	slave, exists := m.slaves[msg.slave.ID]
-	if !exists {
-		msg.errc <- fmt.Errorf("unrecognised slave ID")
-		return nil
-	}
-	if slave.State == slaveFailed || slave.State == slaveFinished {
-		msg.errc <- fmt.Errorf("cannot modify slave state once failed or finished")
-		return nil
-	}
-
-	var err error
-	switch msg.slave.State {
-	case slaveAccepted:
-		msg.errc <- fmt.Errorf("invalid slave state")
-		return nil
-
-	case slaveFailed:
-		err = NewError(ErrSlaveFailed, nil, "slave failed")
-	}
-	// if it's still testing (a progress update), finished or failed
-	msg.errc <- nil
-	slave.update(&msg.slave)
-	return err
-}
-
-func (m *Master) done() bool {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	for _, slave := range m.slaves {
-		if slave.State == slaveTesting || slave.State == slaveAccepted {
-			return false
+func (m *Master) startLoadTest() error {
+	m.logger.Info("All slaves connected - starting load test", "count", len(m.slaves))
+	for id, rs := range m.slaves {
+		if err := rs.StartLoadTest(); err != nil {
+			m.logger.Info("Failed to start load test for slave", "id", id, "err", err)
+			return err
 		}
 	}
-	return true
+	return nil
 }
 
-func (m *Master) addSlave(slave *remoteSlave) error {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-
-	if _, exists := m.slaves[slave.ID]; !exists {
-		if len(m.slaves) == m.cfg.Master.ExpectSlaves {
-			return fmt.Errorf("too many slaves")
-		}
-		if slave.State != slaveAccepted {
-			return fmt.Errorf("slave must be accepted before it can change state")
-		}
-		m.slaves[slave.ID] = slave
-		m.logger.Info("Added slave", "slaveID", slave.ID)
-		return nil
+func (m *Master) failAllRemoteSlaves(reason string) {
+	m.logger.Debug("Failing all remote slaves", "reason", reason)
+	for _, rs := range m.slaves {
+		_ = rs.Fail(reason)
 	}
-
-	switch slave.State {
-	case slaveAccepted:
-		return fmt.Errorf("slave already exists")
-
-	case slaveTesting:
-		return &stillWaitingForSlaves{}
-
-	case slaveFailed:
-		delete(m.slaves, slave.ID)
-		m.logger.Info("Removed failed slave", "slaveID", slave.ID)
-		return nil
-	}
-	return fmt.Errorf("invalid state")
+	m.logger.Debug("Failed all remote slaves")
 }
 
-func (m *Master) ready() bool {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	return len(m.slaves) == m.cfg.Master.ExpectSlaves
-}
-
-// NOTE: Not thread-safe
-func (m *Master) broadcastReady() {
-	for _, ch := range m.readySubscribers {
-		ch <- true
-	}
-}
-
-func (m *Master) shutdown() {
-	m.logger.Info("Shutting down")
-	if err := m.svr.shutdown(); err != nil {
-		m.logger.Error("Failed to shut down HTTP server", "err", err)
-	}
-	if m.cfg.TestNetwork.OutageSim.Enabled {
-		m.shutdownOutageSim()
-	}
-	if err := m.getShutdownErr(); err != nil {
-		m.logger.Error("Master failed", "err", err)
-	} else {
-		m.logger.Info("Master shut down successfully")
-	}
-}
-
-func (m *Master) fail(err error) error {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	m.flagKill = true
-	m.shutdownErr = err
-	return err
-}
-
-// Kill signals to the master that it must be killed. This occurs
-// asynchronously, resulting in the termination of the `Run` method.
-func (m *Master) Kill() {
-	m.logger.Info("Killing master node")
-	m.fail(NewError(ErrMasterFailed, nil, "master was killed")) // nolint: errcheck
-}
-
-func (m *Master) killed() bool {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	return m.flagKill
-}
-
-func (m *Master) getShutdownErr() error {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	return m.shutdownErr
-}
-
-func (m *Master) trackStartTime() {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	m.startTime = time.Now()
-}
-
-func (m *Master) getSummary() *Summary {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	summaryCopy := *m.summary
-	return &summaryCopy
-}
-
-func (m *Master) getExpectedInteractions() int64 {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	return m.expectedInteractions
-}
-
-func (m *Master) authenticateSlaveRequest(w http.ResponseWriter, r *http.Request) error {
-	if !m.cfg.Master.Auth.Enabled {
-		return nil
-	}
-	username, password, ok := r.BasicAuth()
-	if !ok {
-		return fmt.Errorf("failed to parse basic auth from HTTP header")
-	}
-	// validate the username
-	if username != m.cfg.Master.Auth.Username {
-		return fmt.Errorf("invalid username")
-	}
-	return bcrypt.CompareHashAndPassword([]byte(m.cfg.Master.Auth.PasswordHash), []byte(password))
-}
-
-func (m *Master) handleSlaveRequest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		jsonResponse(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if err := m.authenticateSlaveRequest(w, r); err != nil {
-		jsonResponse(w, "Authentication failed", http.StatusUnauthorized)
-		return
-	}
-	var slave remoteSlave
-	if err := fromJSONReadCloser(r.Body, &slave); err != nil {
-		jsonResponse(w, fmt.Sprintf("Failed to parse message body: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	// pass the message on to the master's event loop to be handled and wait for
-	// a response
-	req := slaveRequest{
-		slave: slave,
-		errc:  make(chan error, 1),
-	}
-	m.slavec <- req
-	err := <-req.errc
-	if err == nil {
-		if req.slave.State == slaveAccepted && m.cfg.TestNetwork.Autodetect.Enabled {
-			jsonResponse(w, testNetworkTargets{Targets: m.getTargets()}, http.StatusOK)
-			return
-		}
-		jsonResponse(w, "OK", http.StatusOK)
-		return
-	}
-
-	m.logger.Debug("Result from slave request", "result", err)
-
-	switch err.(type) {
-	case *stillWaitingForTargets:
-		jsonResponse(w, "Still waiting for all Tendermint targets to become available", http.StatusNotModified)
-
-	case *stillWaitingForSlaves:
-		// facilitate the long polling wait until we're ready
-		id, readyc := m.registerReadySubscriber()
-		defer m.unregisterReadySubscriber(id)
-		select {
-		case ready := <-readyc:
-			if ready {
-				jsonResponse(w, "Ready!", http.StatusOK)
-			} else {
-				// probably another slave that failed
-				jsonResponse(w, "Failed", http.StatusServiceUnavailable)
-			}
-
-		case <-time.After(DefaultSlaveLongPollTimeout - (1 * time.Second)):
-			jsonResponse(w, "Not ready yet", http.StatusNotModified)
-		}
-
-	default:
-		jsonResponse(w, fmt.Sprintf("Error: %v", err), http.StatusBadRequest)
-	}
-}
-
-func (m *Master) registerReadySubscriber() (int, chan bool) {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	// find an unused subscriber ID
-	id := rand.Int()
-	_, exists := m.readySubscribers[id]
-	for exists {
-		id = rand.Int()
-		_, exists = m.readySubscribers[id]
-	}
-
-	m.readySubscribers[id] = make(chan bool, 1)
-	return id, m.readySubscribers[id]
-}
-
-func (m *Master) unregisterReadySubscriber(id int) {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	delete(m.readySubscribers, id)
-}
-
-func (m *Master) startOutageSim() (err error) {
-	var targetURL *url.URL
-	nodeURLs := make(map[string]string)
-	for _, targetCfg := range m.getTargets() {
-		targetURL, err = url.Parse(targetCfg.URL)
+func (m *Master) newWebSocketHandler() func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
+			m.logger.Error("Error while attempting to upgrade incoming WebSockets connection", "err", err)
 			return
 		}
-		nodeURLs[targetCfg.ID] = fmt.Sprintf("%s://%s:%d", targetURL.Scheme, targetURL.Hostname(), m.cfg.TestNetwork.OutageSim.TargetPort)
+		defer conn.Close()
+
+		m.logger.Debug("Received incoming WebSockets connection", "r", r)
+		newRemoteSlave(conn, m).Run()
 	}
-	m.outageSim, err = NewOutageSimulator(
-		m.cfg.TestNetwork.OutageSim.Plan,
-		m.cfg.TestNetwork.OutageSim.Username,
-		m.cfg.TestNetwork.OutageSim.Password,
-		nodeURLs,
-	)
-	if err != nil {
+}
+
+func (m *Master) runServer() {
+	defer close(m.svrStopped)
+
+	m.logger.Info("Starting WebSockets server")
+
+	if err := m.svr.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		m.logger.Error("Server shut down", "err", err)
 		return
 	}
-	go m.listenForOutageSimErrors()
-	m.logger.Info("Starting outage simulator")
-	m.outageSim.Start(m.outageSimErrc)
-	return
+	m.logger.Info("Server shut down")
 }
 
-func (m *Master) shutdownOutageSim() {
-	m.logger.Info("Waiting for outage simulator to complete")
-	m.outageSim.Wait()
-	m.logger.Info("Outage simulator complete")
-}
+// Graceful shutdown for the web server.
+func (m *Master) shutdownServer() {
+	m.logger.Info("Shutting down web server")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-func (m *Master) listenForOutageSimErrors() {
-	killCheckTicker := time.NewTicker(100 * time.Millisecond)
-	defer killCheckTicker.Stop()
-	for {
-		select {
-		case err := <-m.outageSimErrc:
-			m.fail(NewError(ErrMasterFailed, err, "outage simulator error")) // nolint: errcheck
-			return
-
-		case <-killCheckTicker.C:
-			if m.killed() {
-				m.outageSim.Cancel()
-				return
-			}
-		}
+	if err := m.svr.Shutdown(ctx); err != nil {
+		m.logger.Error("Failed to gracefully shut down web server", "err", err)
+	} else {
+		m.logger.Info("Shut down web server")
 	}
 }
 
-//-----------------------------------------------------------------------------
-
-func (e *stillWaitingForTargets) Error() string {
-	return "still waiting for required number of Tendermint peers"
+func (m *Master) expectedSlaves() int {
+	return m.masterCfg.ExpectSlaves
 }
 
-func (e *stillWaitingForSlaves) Error() string {
-	return "still waiting for all slaves to connect"
+func (m *Master) config() Config {
+	return *m.cfg
+}
+
+func (m *Master) stopRemoteSlaves() {
+	m.logger.Debug("Stopping all remote slaves")
+	for _, rs := range m.slaves {
+		rs.Stop()
+	}
 }

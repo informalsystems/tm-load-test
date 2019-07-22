@@ -4,14 +4,15 @@ BUILD_DIR ?= ./build
 	build-linux build-tm-load-test-linux build-tm-outage-sim-server-linux \
 	test lint clean
 .DEFAULT_GOAL := build
+BUILD_FLAGS = -mod=readonly
 
 build: build-tm-load-test build-tm-outage-sim-server
 
 build-tm-load-test:
-	GO111MODULE=on go build -o $(BUILD_DIR)/tm-load-test ./cmd/tm-load-test/main.go
+	GO111MODULE=on go build $(BUILD_FLAGS) -o $(BUILD_DIR)/tm-load-test ./cmd/tm-load-test/main.go
 
 build-tm-outage-sim-server:
-	GO111MODULE=on go build -o $(BUILD_DIR)/tm-outage-sim-server ./cmd/tm-outage-sim-server/main.go
+	GO111MODULE=on go build $(BUILD_FLAGS) -o $(BUILD_DIR)/tm-outage-sim-server ./cmd/tm-outage-sim-server/main.go
 
 build-linux: build-tm-load-test-linux build-tm-outage-sim-server-linux
 
