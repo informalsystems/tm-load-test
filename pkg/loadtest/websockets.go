@@ -3,7 +3,6 @@ package loadtest
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -13,8 +12,6 @@ import (
 const (
 	defaultWSReadTimeout  = 3 * time.Second
 	defaultWSWriteTimeout = 3 * time.Second
-	defaultWSPongWait     = 30 * time.Second
-	defaultWSPingPeriod   = (defaultWSPongWait * 9) / 10
 )
 
 // simpleSocket provides a simpler interface to interact with a websockets
@@ -142,35 +139,6 @@ func (s *simpleSocket) Run() {
 		close(s.stopped)
 	}()
 
-	pingTicker := time.NewTicker(defaultWSPingPeriod)
-	defer pingTicker.Stop()
-
-	connClosed := make(chan struct{}, 1)
-	connErr := make(chan error, 1)
-	s.conn.SetPingHandler(func(appData string) error {
-		s.logger.Debug("Sending PONG")
-		err := s.conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(defaultWSPongWait))
-		if err == websocket.ErrCloseSent {
-			return nil
-		} else if e, ok := err.(net.Error); ok && e.Temporary() {
-			return nil
-		}
-		connErr <- err
-		return err
-	})
-	s.conn.SetPongHandler(func(appData string) error {
-		s.logger.Debug("Reading PONG")
-		_ = s.conn.SetReadDeadline(time.Now().Add(defaultWSPongWait))
-		return nil
-	})
-	s.conn.SetCloseHandler(func(code int, text string) error {
-		s.logger.Debug("Connection closed")
-		message := websocket.FormatCloseMessage(code, "")
-		_ = s.conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(defaultWSWriteTimeout))
-		close(connClosed)
-		return nil
-	})
-
 	go s.readPump()
 	defer func() {
 		close(s.stopReadPump)
@@ -183,20 +151,8 @@ func (s *simpleSocket) Run() {
 			s.logger.Debug("Attempting to write to WebSocket", "data", string(req.data), "timeout", req.timeout.String())
 			s.handleWrite(req)
 
-		case <-pingTicker.C:
-			s.logger.Debug("Sending PING")
-			_ = s.conn.WriteMessage(websocket.PingMessage, nil)
-
 		case <-s.stop:
 			s.logger.Debug("Got cancellation notification")
-			return
-
-		case <-connClosed:
-			s.logger.Info("Connection closed")
-			return
-
-		case err := <-connErr:
-			s.logger.Error("Connection error", "err", err)
 			return
 		}
 	}
