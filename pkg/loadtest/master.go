@@ -10,6 +10,8 @@ import (
 	"github.com/interchainio/tm-load-test/internal/logging"
 )
 
+const masterShutdownTimeout = 10 * time.Second
+
 // Master is a WebSockets server that allows slaves to connect to it to obtain
 // configuration information. It does nothing but coordinate load testing
 // amongst the slaves.
@@ -82,7 +84,7 @@ func (m *Master) Run() error {
 		m.shutdownServer()
 		select {
 		case <-m.svrStopped:
-		case <-time.After(shutdownTimeout):
+		case <-time.After(masterShutdownTimeout):
 			m.logger.Error("Failed to shut down within the required time period")
 		}
 	}()
