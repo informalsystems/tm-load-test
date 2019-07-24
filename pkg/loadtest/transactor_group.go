@@ -90,12 +90,14 @@ func (g *TransactorGroup) Wait() error {
 	var wg sync.WaitGroup
 	var err error
 	errc := make(chan error, len(g.transactors))
-	for _, t := range g.transactors {
+	for i, t := range g.transactors {
 		wg.Add(1)
-		go func(_t *Transactor) {
+		go func(_i int, _t *Transactor) {
 			errc <- _t.Wait()
 			defer wg.Done()
-		}(t)
+			// get the final tx count
+			g.trackTransactorProgress(_i, _t.GetTxCount())
+		}(i, t)
 	}
 	wg.Wait()
 	// collect the results

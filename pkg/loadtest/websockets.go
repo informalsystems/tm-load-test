@@ -58,6 +58,7 @@ type simpleSocketConfig struct {
 	sendCloseMessage       bool          // Should we send a close message when the Run operation is stopped?
 	waitForRemoteClose     bool          // Should we wait for the remote end to close the connection?
 	remoteCloseWaitTimeout time.Duration // If waitForRemoteClose is true, how long should we wait?
+	parentCtx              string        // The context of the parent object responsible for managing this socket (only for logging purposes).
 }
 
 func defaultSimpleSocketConfig() *simpleSocketConfig {
@@ -68,6 +69,7 @@ func defaultSimpleSocketConfig() *simpleSocketConfig {
 		sendCloseMessage:       true,
 		waitForRemoteClose:     false,
 		remoteCloseWaitTimeout: 60 * time.Second,
+		parentCtx:              "",
 	}
 }
 
@@ -109,14 +111,24 @@ func ssRemoteCloseWaitTimeout(timeout time.Duration) simpleSocketOpt {
 	}
 }
 
+func ssParentCtx(ctx string) simpleSocketOpt {
+	return func(cfg *simpleSocketConfig) {
+		cfg.parentCtx = ctx
+	}
+}
+
 func newSimpleSocket(conn *websocket.Conn, opts ...simpleSocketOpt) *simpleSocket {
 	cfg := defaultSimpleSocketConfig()
 	for _, opt := range opts {
 		opt(cfg)
 	}
+	ctx := "simplesocket"
+	if len(cfg.parentCtx) > 0 {
+		ctx = fmt.Sprintf("%s.%s", cfg.parentCtx, ctx)
+	}
 	return &simpleSocket{
 		conn:                   conn,
-		logger:                 logging.NewLogrusLogger("simplesocket"),
+		logger:                 logging.NewLogrusLogger(ctx),
 		inbound:                make(chan websocketReadRequest, cfg.inboundBufSize),
 		outbound:               make(chan websocketWriteRequest, cfg.outboundBufSize),
 		stop:                   make(chan struct{}, 1),
