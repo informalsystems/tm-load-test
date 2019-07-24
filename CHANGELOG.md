@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.1
+* [\#21](https://github.com/interchainio/tm-load-test/pull/21) - Add support
+  for exposing Prometheus-compatible metrics from the MASTER web server via
+  the `/metrics` endpoint. This now provides simple high-level information
+  about the overall load test, like number of transactions sent (overall, and
+  per-slave), and the state of the master and each attached slave.
+
 ## v0.4.0
 * [\#20](https://github.com/interchainio/tm-load-test/pull/20) - Significant
   refactor of the underlying codebase to radically simplify the code and make
