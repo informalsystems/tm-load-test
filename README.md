@@ -84,6 +84,39 @@ tm-load-test slave --help
 To implement your own client type to load test your own Tendermint ABCI
 application, see the [`loadtest` package docs here](./pkg/loadtest/README.md).
 
+## Monitoring
+As of v0.4.1, `tm-load-test` exposes a number of metrics when in master/slave 
+mode, but only from the master's web server at the `/metrics` endpoint. So if
+you bind your master node to `localhost:26670`, you should be able to get these
+metrics from:
+
+```bash
+curl http://localhost:26670/metrics
+```
+
+The following kinds of metrics are made available here:
+
+* Total number of transactions recorded from the master's perspective (across
+  all slaves)
+* Total number of transactions sent by each slave
+* The status of the master node, which is a gauge that indicates one of the 
+  following codes:
+  * 0 = Master starting
+  * 1 = Master waiting for all slaves to connect
+  * 2 = Load test underway
+  * 3 = Master and/or one or more slave(s) failed
+  * 4 = All slaves completed load testing successfully
+* The status of each slave node, which is also a gauge that indicates one of the
+  following codes:
+  * 0 = Slave connected
+  * 1 = Slave accepted
+  * 2 = Slave rejected
+  * 3 = Load testing underway
+  * 4 = Slave failed
+  * 5 = Slave completed load testing successfully
+* Standard Prometheus-provided metrics about the garbage collector in 
+  `tm-load-test`
+
 ## Development
 To run the linter and the tests:
 
