@@ -51,7 +51,7 @@ func NewSlave(cfg *SlaveConfig) (*Slave, error) {
 	return &Slave{
 		id:         slaveID,
 		slaveCfg:   cfg,
-		logger:     logging.NewLogrusLogger("slave"),
+		logger:     logging.NewLogrusLogger("slave[%s]", slaveID),
 		interrupts: make(map[string]func()),
 		stop:       make(chan struct{}, 1),
 		stopped:    make(chan struct{}, 1),
@@ -151,7 +151,7 @@ func (s *Slave) connectToMaster() error {
 				ssSendCloseMessage(true),
 				ssWaitForRemoteClose(true),
 				ssRemoteCloseWaitTimeout(60*time.Second),
-				ssParentCtx("slave"),
+				ssParentCtx(fmt.Sprintf("slave[%s]", s.ID())),
 			)
 			return nil
 		}
