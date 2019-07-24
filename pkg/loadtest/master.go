@@ -82,8 +82,8 @@ func NewMaster(cfg *Config, masterCfg *MasterConfig) *Master {
 		stop:             make(chan struct{}, 1),
 		totalTxsPerSlave: make(map[string]int),
 		stateMetric: promauto.NewGauge(prometheus.GaugeOpts{
-			Name: "tmloadtest_master_status",
-			Help: "The current status of the tm-load-test master",
+			Name: "tmloadtest_master_state",
+			Help: "The current state of the tm-load-test master",
 		}),
 		totalTxsMetric: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "tmloadtest_master_total_txs",
