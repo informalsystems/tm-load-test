@@ -4,12 +4,11 @@ import (
 	"github.com/interchainio/tm-load-test/pkg/loadtest"
 )
 
-const appLongDesc = `Load testing application for Tendermint kvstore with optional master/slave mode.
+const appLongDesc = `
+Load testing application for Tendermint with optional master/slave mode.
 Generates large quantities of arbitrary transactions and submits those 
-transactions to one or more Tendermint endpoints. Assumes the kvstore ABCI app
-to have been deployed on the target Tendermint network. For testing other kinds
-of ABCI apps, you will need to build your own load testing client. See
-https://github.com/interchainio/tm-load-test for details.
+transactions to one or more Tendermint endpoints. By default, it assumes that
+you are running the kvstore ABCI application on your Tendermint network.
 
 To run the application in a similar fashion to tm-bench (STANDALONE mode):
     tm-load-test -c 1 -T 10 -r 1000 -s 250 \

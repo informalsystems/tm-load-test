@@ -88,12 +88,17 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 				logger.Error(err.Error())
 				os.Exit(1)
 			}
-			slave := NewSlave(&slaveCfg)
+			slave, err := NewSlave(&slaveCfg)
+			if err != nil {
+				logger.Error("Failed to create new slave", "err", err)
+				os.Exit(1)
+			}
 			if err := slave.Run(); err != nil {
 				os.Exit(1)
 			}
 		},
 	}
+	slaveCmd.PersistentFlags().StringVar(&slaveCfg.ID, "id", "", "An optional unique ID for this slave. Will show up in metrics and logs. If not specified, a UUID will be generated.")
 	slaveCmd.PersistentFlags().StringVar(&slaveCfg.MasterAddr, "master", "ws://localhost:26670", "The WebSockets URL on which to find the master node")
 	slaveCmd.PersistentFlags().IntVar(&slaveCfg.MasterConnectTimeout, "connect-timeout", 180, "The maximum number of seconds to keep trying to connect to the master")
 

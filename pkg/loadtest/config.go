@@ -24,10 +24,12 @@ type MasterConfig struct {
 	BindAddr            string `json:"bind_addr"`       // The "host:port" to which to bind the master node to listen for incoming slaves.
 	ExpectSlaves        int    `json:"expect_slaves"`   // The number of slaves to expect before starting the load test.
 	SlaveConnectTimeout int    `json:"connect_timeout"` // The number of seconds to wait for all slaves to connect.
+	ShutdownWait        int    `json:"shutdown_wait"`   // The number of seconds to wait at shutdown (while keeping the HTTP server running - primarily to allow Prometheus to keep polling).
 }
 
 // SlaveConfig is the configuration options specific to a slave node.
 type SlaveConfig struct {
+	ID                   string `json:"id"`              // A unique ID for this slave instance. Will show up in the metrics reported by the master for this slave.
 	MasterAddr           string `json:"master_addr"`     // The address at which to find the master node.
 	MasterConnectTimeout int    `json:"connect_timeout"` // The maximum amount of time, in seconds, to allow for the master to become available.
 }
@@ -102,6 +104,9 @@ func (c Config) ToJSON() string {
 }
 
 func (c SlaveConfig) Validate() error {
+	if len(c.ID) > 0 && !isValidSlaveID(c.ID) {
+		return fmt.Errorf("Invalid slave ID \"%s\": slave IDs can only be lowercase alphanumeric characters", c.ID)
+	}
 	if len(c.MasterAddr) == 0 {
 		return fmt.Errorf("master address must be specified")
 	}

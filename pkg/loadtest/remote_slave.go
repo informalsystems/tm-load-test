@@ -7,6 +7,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/interchainio/tm-load-test/internal/logging"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // remoteSlave encapsulates the logic and transport-layer interaction between
@@ -18,15 +20,26 @@ type remoteSlave struct {
 	sock   *simpleSocket // The simpler interface to our websocket connection.
 
 	// Remote slave state
-	mtx     sync.RWMutex
-	id      string
-	txCount int
-	state   slaveState
-	logger  logging.Logger
+	mtx           sync.RWMutex
+	id            string
+	txCount       int
+	state         slaveState
+	logger        logging.Logger
+	stateMetric   prometheus.Gauge // A numeric representation of the state variable.
+	txCountMetric prometheus.Gauge // A way for us to expose the txCount variable via Prometheus.
 
 	stateCtrl chan remoteSlaveStateCtrlMsg
 	stop      chan struct{}
 	stopped   chan struct{}
+}
+
+var slaveStateMetricValues = map[slaveState]float64{
+	slaveConnected: 0,
+	slaveAccepted:  1,
+	slaveRejected:  2,
+	slaveTesting:   3,
+	slaveFailed:    4,
+	slaveCompleted: 5,
 }
 
 type remoteSlaveStateCtrlMsg struct {
@@ -36,7 +49,7 @@ type remoteSlaveStateCtrlMsg struct {
 }
 
 func newRemoteSlave(conn *websocket.Conn, master *Master) *remoteSlave {
-	return &remoteSlave{
+	rs := &remoteSlave{
 		master: master,
 		sock: newSimpleSocket(
 			conn,
@@ -44,6 +57,7 @@ func newRemoteSlave(conn *websocket.Conn, master *Master) *remoteSlave {
 			ssOutboundBufSize(master.expectedSlaves()),
 			ssFlushOnStop(true),
 			ssSendCloseMessage(false),
+			ssParentCtx("remoteSlave"),
 		),
 		logger:    logging.NewNoopLogger(),
 		state:     slaveConnected,
@@ -51,6 +65,7 @@ func newRemoteSlave(conn *websocket.Conn, master *Master) *remoteSlave {
 		stop:      make(chan struct{}, 1),
 		stopped:   make(chan struct{}, 1),
 	}
+	return rs
 }
 
 func (rs *remoteSlave) Run() {
@@ -104,6 +119,10 @@ func (rs *remoteSlave) eventLoop() {
 		_ = rs.sock.WriteSlaveMsg(slaveMsg{State: slaveRejected, Error: err.Error()})
 		return
 	}
+
+	// We only now know what the remote slave's ID is, so now we can create its
+	// metrics.
+	rs.createMetrics()
 
 	// wait until the master indicates that the load test can start, or fail
 	if err = rs.waitForStart(); err != nil {
@@ -216,7 +235,8 @@ func (rs *remoteSlave) sendCtrlMsg(newState slaveState, errors ...string) error 
 	select {
 	case resultErr := <-resp:
 		if resultErr == nil {
-			rs.state = newState
+			rs.setState(newState)
+			rs.stateMetric.Set(slaveStateMetricValues[newState])
 		}
 		rs.logger.Debug("Got response", "resultErr", resultErr)
 		return resultErr
@@ -229,7 +249,7 @@ func (rs *remoteSlave) sendCtrlMsg(newState slaveState, errors ...string) error 
 func (rs *remoteSlave) setID(id string) {
 	rs.mtx.Lock()
 	rs.id = id
-	rs.logger = logging.NewLogrusLogger(fmt.Sprintf("slave[%s]", id))
+	rs.logger = logging.NewLogrusLogger(fmt.Sprintf("remoteSlave[%s]", id))
 	rs.mtx.Unlock()
 }
 
@@ -242,6 +262,7 @@ func (rs *remoteSlave) ID() string {
 func (rs *remoteSlave) setTxCount(txCount int) {
 	rs.mtx.Lock()
 	rs.txCount = txCount
+	rs.txCountMetric.Set(float64(txCount))
 	rs.mtx.Unlock()
 }
 
@@ -255,4 +276,29 @@ func (rs *remoteSlave) getState() slaveState {
 	rs.mtx.RLock()
 	defer rs.mtx.RUnlock()
 	return rs.state
+}
+
+func (rs *remoteSlave) setState(newState slaveState) {
+	rs.mtx.Lock()
+	rs.state = newState
+	if rs.stateMetric != nil {
+		rs.stateMetric.Set(slaveStateMetricValues[newState])
+	}
+	rs.mtx.Unlock()
+	rs.logger.Debug("Slave state set", "newState", newState)
+}
+
+func (rs *remoteSlave) createMetrics() {
+	rs.mtx.Lock()
+	rs.stateMetric = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: fmt.Sprintf("tmloadtest_slave_%s_state", rs.id),
+		Help: fmt.Sprintf("The current state of slave %s", rs.id),
+	})
+	rs.stateMetric.Set(slaveStateMetricValues[slaveAccepted])
+
+	rs.txCountMetric = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: fmt.Sprintf("tmloadtest_slave_%s_total_txs", rs.id),
+		Help: fmt.Sprintf("The total number of transactions sent by slave %s", rs.id),
+	})
+	rs.mtx.Unlock()
 }

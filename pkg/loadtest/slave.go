@@ -2,8 +2,10 @@ package loadtest
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/gorilla/websocket"
 	"github.com/interchainio/tm-load-test/internal/logging"
@@ -38,16 +40,23 @@ type Slave struct {
 	tgCancel chan error // Send errors here to cancel the TransactorGroup's operations.
 }
 
-func NewSlave(cfg *SlaveConfig) *Slave {
+func NewSlave(cfg *SlaveConfig) (*Slave, error) {
+	slaveID := cfg.ID
+	if len(slaveID) == 0 {
+		slaveID = makeSlaveID()
+	}
+	if !isValidSlaveID(slaveID) {
+		return nil, fmt.Errorf("invalid slave ID \"%s\": slave IDs can only contain lowercase alphanumeric characters", slaveID)
+	}
 	return &Slave{
-		id:         uuid.NewV4().String(),
+		id:         slaveID,
 		slaveCfg:   cfg,
 		logger:     logging.NewLogrusLogger("slave"),
 		interrupts: make(map[string]func()),
 		stop:       make(chan struct{}, 1),
 		stopped:    make(chan struct{}, 1),
 		tgCancel:   make(chan error, 1),
-	}
+	}, nil
 }
 
 // Run executes the primary event loop for this slave.
@@ -142,6 +151,7 @@ func (s *Slave) connectToMaster() error {
 				ssSendCloseMessage(true),
 				ssWaitForRemoteClose(true),
 				ssRemoteCloseWaitTimeout(60*time.Second),
+				ssParentCtx("slave"),
 			)
 			return nil
 		}
@@ -272,6 +282,7 @@ func (s *Slave) reportProgress(tg *TransactorGroup, totalTxs int) {
 }
 
 func (s *Slave) reportFinalResults(totalTxs int) error {
+	s.logger.Debug("Reporting final results back to master", "totalTxs", totalTxs)
 	return s.sock.WriteSlaveMsg(slaveMsg{ID: s.ID(), State: slaveCompleted, TxCount: totalTxs})
 }
 
@@ -288,4 +299,17 @@ func (s *Slave) cancel() {
 func (s *Slave) close() {
 	s.sock.Stop()
 	s.logger.Info("Closed connection to remote master")
+}
+
+func isValidSlaveID(id string) bool {
+	for _, r := range id {
+		if !unicode.IsLower(r) && !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func makeSlaveID() string {
+	return strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 }

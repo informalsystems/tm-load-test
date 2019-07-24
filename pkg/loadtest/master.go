@@ -8,9 +8,21 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/interchainio/tm-load-test/internal/logging"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const masterShutdownTimeout = 10 * time.Second
+
+// Master status gauge values
+const (
+	masterStarting  = 0
+	masterWaiting   = 1
+	masterTesting   = 2
+	masterFailed    = 3
+	masterCompleted = 4
+)
 
 // Master is a WebSockets server that allows slaves to connect to it to obtain
 // configuration information. It does nothing but coordinate load testing
@@ -33,7 +45,12 @@ type Master struct {
 	// Rudimentary statistics
 	startTime          time.Time
 	lastProgressUpdate time.Time
-	totalTxs           int
+	totalTxs           int            // The last calculated total number of transactions across all slaves.
+	totalTxsPerSlave   map[string]int // The number of transactions sent by each slave.
+
+	// Prometheus metrics
+	stateMetric    prometheus.Gauge // A code-based status metric for representing the master's current state.
+	totalTxsMetric prometheus.Gauge // The total number of transactions sent by all slaves.
 }
 
 type remoteSlaveRegisterRequest struct {
@@ -54,23 +71,34 @@ var upgrader = websocket.Upgrader{
 func NewMaster(cfg *Config, masterCfg *MasterConfig) *Master {
 	logger := logging.NewLogrusLogger("master")
 	master := &Master{
-		cfg:             cfg,
-		masterCfg:       masterCfg,
-		logger:          logger,
-		svrStopped:      make(chan struct{}, 1),
-		slaves:          make(map[string]*remoteSlave),
-		slaveRegister:   make(chan remoteSlaveRegisterRequest, masterCfg.ExpectSlaves),
-		slaveUnregister: make(chan remoteSlaveUnregisterRequest, masterCfg.ExpectSlaves),
-		slaveUpdate:     make(chan slaveMsg, masterCfg.ExpectSlaves),
-		stop:            make(chan struct{}, 1),
+		cfg:              cfg,
+		masterCfg:        masterCfg,
+		logger:           logger,
+		svrStopped:       make(chan struct{}, 1),
+		slaves:           make(map[string]*remoteSlave),
+		slaveRegister:    make(chan remoteSlaveRegisterRequest, masterCfg.ExpectSlaves),
+		slaveUnregister:  make(chan remoteSlaveUnregisterRequest, masterCfg.ExpectSlaves),
+		slaveUpdate:      make(chan slaveMsg, masterCfg.ExpectSlaves),
+		stop:             make(chan struct{}, 1),
+		totalTxsPerSlave: make(map[string]int),
+		stateMetric: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "tmloadtest_master_status",
+			Help: "The current status of the tm-load-test master",
+		}),
+		totalTxsMetric: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "tmloadtest_master_total_txs",
+			Help: "The total cumulative number of transactions sent by all slaves",
+		}),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", master.newWebSocketHandler())
+	mux.Handle("/metrics", promhttp.Handler())
 	svr := &http.Server{
 		Addr:    masterCfg.BindAddr,
 		Handler: mux,
 	}
 	master.svr = svr
+	master.stateMetric.Set(masterStarting)
 	return master
 }
 
@@ -90,7 +118,10 @@ func (m *Master) Run() error {
 	}()
 
 	// we want to know if the user hits Ctrl+Break
-	cancelTrap := trapInterrupts(func() { close(m.stop) }, m.logger)
+	cancelTrap := trapInterrupts(func() {
+		close(m.stop)
+		m.stateMetric.Set(masterFailed)
+	}, m.logger)
 	defer close(cancelTrap)
 
 	// we run the WebSockets server in the background
@@ -98,19 +129,24 @@ func (m *Master) Run() error {
 
 	if err := m.waitForSlaves(); err != nil {
 		m.failAllRemoteSlaves(err.Error())
+		m.stateMetric.Set(masterFailed)
 		return err
 	}
 
 	if err := m.receiveTestingUpdates(); err != nil {
 		m.failAllRemoteSlaves(err.Error())
+		m.stateMetric.Set(masterFailed)
 		return err
 	}
 
+	m.stateMetric.Set(masterCompleted)
 	return nil
 }
 
 func (m *Master) waitForSlaves() error {
 	m.logger.Info("Waiting for all slaves to connect and register")
+	m.stateMetric.Set(masterWaiting)
+
 	timeoutTicker := time.NewTicker(time.Duration(m.masterCfg.SlaveConnectTimeout) * time.Second)
 	defer timeoutTicker.Stop()
 
@@ -131,12 +167,17 @@ func (m *Master) waitForSlaves() error {
 
 		case <-m.stop:
 			return fmt.Errorf("wait routine cancelled")
+
+		case <-m.svrStopped:
+			return fmt.Errorf("web server stopped unexpectedly")
 		}
 	}
 }
 
 func (m *Master) receiveTestingUpdates() error {
 	m.logger.Info("Watching for slave updates")
+	m.stateMetric.Set(masterTesting)
+
 	completed := 0
 
 	progressTicker := time.NewTicker(5 * time.Second)
@@ -153,15 +194,21 @@ func (m *Master) receiveTestingUpdates() error {
 				m.logger.Error("Got message from unregistered slave - ignoring", "id", msg.ID)
 				continue
 			}
+			// keep track of how many transactions this slave has reported
+			if msg.TxCount > 0 {
+				m.totalTxsPerSlave[msg.ID] = msg.TxCount
+			}
 
 			switch msg.State {
 			case slaveTesting:
 				m.logger.Debug("Update from remote slave", "id", msg.ID, "txCount", msg.TxCount)
 
 			case slaveCompleted:
+				m.logger.Debug("Slave completed its testing", "id", msg.ID)
 				completed++
 				if completed >= m.masterCfg.ExpectSlaves {
-					m.logger.Debug("Slave completed its testing", "id", msg.ID)
+					m.logger.Info("All slaves completed their load testing")
+					m.logTestingProgress()
 					return nil
 				}
 
@@ -184,6 +231,9 @@ func (m *Master) receiveTestingUpdates() error {
 		case <-m.stop:
 			m.logger.Debug("Load testing cancel signal received")
 			return fmt.Errorf("load testing cancelled")
+
+		case <-m.svrStopped:
+			return fmt.Errorf("web server stopped unexpectedly")
 		}
 	}
 }
@@ -214,6 +264,7 @@ func (m *Master) registerRemoteSlave(rs *remoteSlave) error {
 		return fmt.Errorf("slave with ID %s already exists", id)
 	}
 	m.slaves[id] = rs
+	m.totalTxsPerSlave[id] = 0
 	m.logger.Info("Added remote slave", "id", id)
 	return nil
 }
@@ -233,8 +284,8 @@ func (m *Master) ReceiveSlaveUpdate(msg slaveMsg) {
 
 func (m *Master) logTestingProgress() {
 	totalTxs := 0
-	for _, rs := range m.slaves {
-		totalTxs += rs.TxCount()
+	for _, txCount := range m.totalTxsPerSlave {
+		totalTxs += txCount
 	}
 	overallElapsed := time.Since(m.startTime).Seconds()
 	elapsed := time.Since(m.lastProgressUpdate).Seconds()
@@ -256,8 +307,8 @@ func (m *Master) logTestingProgress() {
 		"avgRate", fmt.Sprintf("%.2f txs/sec", avgRate),
 	)
 
-	m.totalTxs = totalTxs
 	m.lastProgressUpdate = time.Now()
+	m.totalTxsMetric.Set(float64(totalTxs))
 }
 
 func (m *Master) startLoadTest() error {
@@ -307,6 +358,10 @@ func (m *Master) runServer() {
 
 // Graceful shutdown for the web server.
 func (m *Master) shutdownServer() {
+	if m.masterCfg.ShutdownWait > 0 {
+		m.logger.Info("Entering post-shutdown wait period", "wait", fmt.Sprintf("%ds", m.masterCfg.ShutdownWait))
+		time.Sleep(time.Duration(m.masterCfg.ShutdownWait) * time.Second)
+	}
 	m.logger.Info("Shutting down web server")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
