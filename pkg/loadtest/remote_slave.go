@@ -208,6 +208,7 @@ func (rs *remoteSlave) receiveTestingUpdates() error {
 			rs.setTxCount(msg.TxCount)
 			rs.master.ReceiveSlaveUpdate(msg)
 			if msg.State == slaveCompleted {
+				rs.stateMetric.Set(slaveStateMetricValues[slaveCompleted])
 				return nil
 			}
 
