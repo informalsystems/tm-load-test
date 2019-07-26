@@ -11,6 +11,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// CLIVersion must be manually updated as new versions are released.
+const CLIVersion = "v0.4.2"
+
+// cliVersionCommitID must be set through linker settings. See
+// https://stackoverflow.com/a/11355611/1156132 for details.
+var cliVersionCommitID string
+
 // CLIConfig allows developers to customize their own load testing tool.
 type CLIConfig struct {
 	AppName              string
@@ -103,8 +110,21 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 	slaveCmd.PersistentFlags().StringVar(&slaveCfg.MasterAddr, "master", "ws://localhost:26670", "The WebSockets URL on which to find the master node")
 	slaveCmd.PersistentFlags().IntVar(&slaveCfg.MasterConnectTimeout, "connect-timeout", 180, "The maximum number of seconds to keep trying to connect to the master")
 
+	versionCmd := &cobra.Command{
+		Use:   "version",
+		Short: "Display the version of tm-load-test and exit",
+		Run: func(cmd *cobra.Command, args []string) {
+			version := CLIVersion
+			if len(cliVersionCommitID) > 0 {
+				version = fmt.Sprintf("%s-%s", version, cliVersionCommitID)
+			}
+			fmt.Println("tm-load-test", version)
+		},
+	}
+
 	rootCmd.AddCommand(masterCmd)
 	rootCmd.AddCommand(slaveCmd)
+	rootCmd.AddCommand(versionCmd)
 	return rootCmd
 }
 
@@ -125,7 +145,7 @@ func Run(cli *CLIConfig) {
 	}
 }
 
-func trapInterrupts(onKill func(), logger logging.Logger) chan struct {} {
+func trapInterrupts(onKill func(), logger logging.Logger) chan struct{} {
 	sigc := make(chan os.Signal, 1)
 	cancelTrap := make(chan struct{})
 	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)

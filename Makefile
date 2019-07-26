@@ -9,7 +9,9 @@ BUILD_FLAGS = -mod=readonly
 build: build-tm-load-test build-tm-outage-sim-server
 
 build-tm-load-test:
-	GO111MODULE=on go build $(BUILD_FLAGS) -o $(BUILD_DIR)/tm-load-test ./cmd/tm-load-test/main.go
+	GO111MODULE=on go build $(BUILD_FLAGS) \
+		-ldflags "-X github.com/interchainio/tm-load-test/pkg/loadtest.cliVersionCommitID=`git rev-parse --short HEAD`" \
+		-o $(BUILD_DIR)/tm-load-test ./cmd/tm-load-test/main.go
 
 build-tm-outage-sim-server:
 	GO111MODULE=on go build $(BUILD_FLAGS) -o $(BUILD_DIR)/tm-outage-sim-server ./cmd/tm-outage-sim-server/main.go
