@@ -86,7 +86,7 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 				t.Fatal(err)
 			}
 
-		case <-time.After(time.Duration(cfg.Time * 2) * time.Second):
+		case <-time.After(time.Duration(cfg.Time*2) * time.Second):
 			t.Fatal("Timed out waiting for test to complete")
 		}
 

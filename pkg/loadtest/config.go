@@ -5,18 +5,31 @@ import (
 	"fmt"
 )
 
+const (
+	SelectGivenEndpoints   = "given-endpoints"   // Select only the given endpoint(s) for load testing (the default).
+	SelectCrawledEndpoints = "crawled-endpoints" // Select all crawled endpoint addresses (only valid if ExpectPeers is specified in the configuration).
+)
+
+var validEndpointSelectMethods = map[string]interface{}{
+	SelectGivenEndpoints: nil,
+	SelectCrawledEndpoints: nil,
+}
+
 // Config represents the configuration for a single client (i.e. standalone or
 // slave).
 type Config struct {
-	ClientFactory     string   `json:"client_factory"`      // Which client factory should we use for load testing?
-	Connections       int      `json:"connections"`         // The number of WebSockets connections to make to each target endpoint.
-	Time              int      `json:"time"`                // The total time, in seconds, for which to handle the load test.
-	SendPeriod        int      `json:"send_period"`         // The period (in seconds) at which to send batches of transactions.
-	Rate              int      `json:"rate"`                // The number of transactions to generate, per send period.
-	Size              int      `json:"size"`                // The desired size of each generated transaction, in bytes.
-	Count             int      `json:"count"`               // The maximum number of transactions to send. Set to -1 for unlimited.
-	BroadcastTxMethod string   `json:"broadcast_tx_method"` // The broadcast_tx method to use (can be "sync", "async" or "commit").
-	Endpoints         []string `json:"endpoints"`           // A list of the Tendermint node endpoints to which to connect for this load test.
+	ClientFactory        string   `json:"client_factory"`         // Which client factory should we use for load testing?
+	Connections          int      `json:"connections"`            // The number of WebSockets connections to make to each target endpoint.
+	Time                 int      `json:"time"`                   // The total time, in seconds, for which to handle the load test.
+	SendPeriod           int      `json:"send_period"`            // The period (in seconds) at which to send batches of transactions.
+	Rate                 int      `json:"rate"`                   // The number of transactions to generate, per send period.
+	Size                 int      `json:"size"`                   // The desired size of each generated transaction, in bytes.
+	Count                int      `json:"count"`                  // The maximum number of transactions to send. Set to -1 for unlimited.
+	BroadcastTxMethod    string   `json:"broadcast_tx_method"`    // The broadcast_tx method to use (can be "sync", "async" or "commit").
+	Endpoints            []string `json:"endpoints"`              // A list of the Tendermint node endpoints to which to connect for this load test.
+	EndpointSelectMethod string   `json:"endpoint_select_method"` // The method by which to select endpoints for load testing.
+	ExpectPeers          int      `json:"expect_peers"`           // The minimum number of peers to expect before starting a load test. Set to 0 by default (no minimum).
+	PeerConnectTimeout   int      `json:"peer_connect_timeout"`   // The maximum time to wait (in seconds) for all peers to connect, if ExpectPeers > 0.
 }
 
 // MasterConfig is the configuration options specific to a master node.
@@ -70,6 +83,15 @@ func (c Config) Validate() error {
 	}
 	if len(c.Endpoints) == 0 {
 		return fmt.Errorf("expected at least one endpoint to conduct load test against, but found none")
+	}
+	if _, ok := validEndpointSelectMethods[c.EndpointSelectMethod]; !ok {
+		return fmt.Errorf("invalid endpoint-select-method: %s", c.EndpointSelectMethod)
+	}
+	if c.ExpectPeers < 0 {
+		return fmt.Errorf("expect-peers must be at least 0, but got %d", c.ExpectPeers)
+	}
+	if c.ExpectPeers > 0 && c.PeerConnectTimeout < 1 {
+		return fmt.Errorf("peer-connect-timeout must be at least 1 if expect-peers is non-zero, but got %d", c.PeerConnectTimeout)
 	}
 	return nil
 }
