@@ -51,7 +51,7 @@ func NewSlave(cfg *SlaveConfig) (*Slave, error) {
 	return &Slave{
 		id:         slaveID,
 		slaveCfg:   cfg,
-		logger:     logging.NewLogrusLogger("slave[%s]", slaveID),
+		logger:     logging.NewLogrusLogger(fmt.Sprintf("slave[%s]", slaveID)),
 		interrupts: make(map[string]func()),
 		stop:       make(chan struct{}, 1),
 		stopped:    make(chan struct{}, 1),
