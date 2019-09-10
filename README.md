@@ -14,7 +14,7 @@ with built-in support for the `kvstore` ABCI application, but you can
 ## Requirements
 In order to build and use the tools, you will need:
 
-* Go 1.12+
+* Go 1.13+
 * `make`
 
 ## Building
