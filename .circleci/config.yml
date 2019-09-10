@@ -48,14 +48,34 @@ jobs:
 workflows:
   version: 2
 
-  mini_qa:
-    jobs:
-      - lint
-      - test
-      - build
+# Note: mini_qa disabled as per Thane's request
+#  mini_qa:
+#    jobs:
+#      - lint
+#      - test
+#      - build
   release_management:
     jobs:
+      - lint:
+          filters:
+            branches:
+              only:
+                - develop
+                - master
+            tags:
+              only: /^v[0-9]+\.[0-9]+\.[0-9]+/
+      - test:
+          filters:
+            branches:
+              only:
+                - develop
+                - master
+            tags:
+              only: /^v[0-9]+\.[0-9]+\.[0-9]+/
       - build:
+          requires:
+            - lint
+            - test
           filters:
             branches:
               ignore: /.*/
