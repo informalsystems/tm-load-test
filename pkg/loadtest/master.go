@@ -17,11 +17,12 @@ const masterShutdownTimeout = 10 * time.Second
 
 // Master status gauge values
 const (
-	masterStarting  = 0
-	masterWaiting   = 1
-	masterTesting   = 2
-	masterFailed    = 3
-	masterCompleted = 4
+	masterStarting         = 0
+	masterWaitingForPeers  = 1
+	masterWaitingForSlaves = 2
+	masterTesting          = 3
+	masterFailed           = 4
+	masterCompleted        = 5
 )
 
 // Master is a WebSockets server that allows slaves to connect to it to obtain
@@ -124,6 +125,16 @@ func (m *Master) Run() error {
 	}, m.logger)
 	defer close(cancelTrap)
 
+	// if we care about how many peers are connected in the network, wait
+	// for a minimum number of them to connect before even listening for
+	// incoming slave connections
+	if m.cfg.ExpectPeers > 0 {
+		if err := m.waitForPeers(); err != nil {
+			m.stateMetric.Set(masterFailed)
+			return err
+		}
+	}
+
 	// we run the WebSockets server in the background
 	go m.runServer()
 
@@ -145,7 +156,7 @@ func (m *Master) Run() error {
 
 func (m *Master) waitForSlaves() error {
 	m.logger.Info("Waiting for all slaves to connect and register")
-	m.stateMetric.Set(masterWaiting)
+	m.stateMetric.Set(masterWaitingForSlaves)
 
 	timeoutTicker := time.NewTicker(time.Duration(m.masterCfg.SlaveConnectTimeout) * time.Second)
 	defer timeoutTicker.Stop()
@@ -159,7 +170,8 @@ func (m *Master) waitForSlaves() error {
 			}
 
 		case req := <-m.slaveUnregister:
-			// we can do this safely here without jeopardising the load testing
+			// we can do this safely during this waiting period without
+			// jeopardizing the load testing
 			m.unregisterRemoteSlave(req.id)
 
 		case <-timeoutTicker.C:
@@ -172,6 +184,27 @@ func (m *Master) waitForSlaves() error {
 			return fmt.Errorf("web server stopped unexpectedly")
 		}
 	}
+}
+
+// Starts with the configuration file's endpoints list, polling those endpoints
+// for unique peers that have connected. Waits until we have the minimum number
+// of endpoints, and on success returns a list of peer addresses. On failure,
+// returns a relevant error.
+func (m *Master) waitForPeers() error {
+	m.stateMetric.Set(masterWaitingForPeers)
+	peers, err := waitForTendermintNetworkPeers(
+		m.cfg.Endpoints,
+		m.cfg.ExpectPeers,
+		time.Duration(m.cfg.PeerConnectTimeout)*time.Second,
+		m.logger,
+	)
+	if err != nil {
+		return err
+	}
+	if m.cfg.EndpointSelectMethod == SelectCrawledEndpoints {
+		m.cfg.Endpoints = peers
+	}
+	return nil
 }
 
 func (m *Master) receiveTestingUpdates() error {

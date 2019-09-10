@@ -16,7 +16,7 @@ const (
 
 // simpleSocket provides a simpler interface to interact with a websockets
 // connection than that provided by Gorilla. All reads and writes happen within
-// a single goroutine.
+// two goroutines: one for reading, and one for writing.
 type simpleSocket struct {
 	conn   *websocket.Conn
 	logger logging.Logger

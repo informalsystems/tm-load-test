@@ -86,7 +86,7 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 				t.Fatal(err)
 			}
 
-		case <-time.After(time.Duration(cfg.Time * 2) * time.Second):
+		case <-time.After(time.Duration(cfg.Time*2) * time.Second):
 			t.Fatal("Timed out waiting for test to complete")
 		}
 
@@ -139,15 +139,16 @@ func getRPCAddress() string {
 
 func testConfig() loadtest.Config {
 	return loadtest.Config{
-		ClientFactory:     "kvstore",
-		Connections:       1,
-		Time:              5,
-		SendPeriod:        1,
-		Rate:              100,
-		Size:              100,
-		Count:             totalTxsPerSlave,
-		BroadcastTxMethod: "async",
-		Endpoints:         []string{getRPCAddress()},
+		ClientFactory:        "kvstore",
+		Connections:          1,
+		Time:                 5,
+		SendPeriod:           1,
+		Rate:                 100,
+		Size:                 100,
+		Count:                totalTxsPerSlave,
+		BroadcastTxMethod:    "async",
+		Endpoints:            []string{getRPCAddress()},
+		EndpointSelectMethod: loadtest.SelectGivenEndpoints,
 	}
 }
 

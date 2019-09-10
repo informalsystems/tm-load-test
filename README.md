@@ -102,10 +102,11 @@ The following kinds of metrics are made available here:
 * The status of the master node, which is a gauge that indicates one of the 
   following codes:
   * 0 = Master starting
-  * 1 = Master waiting for all slaves to connect
-  * 2 = Load test underway
-  * 3 = Master and/or one or more slave(s) failed
-  * 4 = All slaves completed load testing successfully
+  * 1 = Master waiting for all peers to connect
+  * 2 = Master waiting for all slaves to connect
+  * 3 = Load test underway
+  * 4 = Master and/or one or more slave(s) failed
+  * 5 = All slaves completed load testing successfully
 * The status of each slave node, which is also a gauge that indicates one of the
   following codes:
   * 0 = Slave connected
