@@ -18,6 +18,7 @@ func executeLoadTest(cfg Config) error {
 			logger,
 		)
 		if err != nil {
+			logger.Error("Failed while waiting for peers to connect", "err", err)
 			return err
 		}
 		if cfg.EndpointSelectMethod == SelectCrawledEndpoints {

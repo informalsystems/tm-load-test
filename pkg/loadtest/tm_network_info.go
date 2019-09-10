@@ -2,6 +2,7 @@ package loadtest
 
 import (
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/interchainio/tm-load-test/internal/logging"
@@ -20,6 +21,8 @@ type tendermintPeerInfo struct {
 // expires). On success, returns the number of peers connected (for reporting),
 // and on failure returns the relevant error.
 //
+// NOTE: this only works if the peers' RPC endpoints are bound to port 26657.
+//
 // TODO: Add in a stabilization time parameter (i.e. a minimum number of peers
 //       must be present when polled repeatedly for a period of time).
 func waitForTendermintNetworkPeers(
@@ -34,10 +37,14 @@ func waitForTendermintNetworkPeers(
 		"timeout", fmt.Sprintf("%.2f seconds", timeout.Seconds()),
 	)
 
-	var err error
 	startTime := time.Now()
 	peers := make(map[string]*tendermintPeerInfo)
-	for _, peerAddr := range startingPeerAddrs {
+	for _, peerURL := range startingPeerAddrs {
+		u, err := url.Parse(peerURL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse peer URL %s: %s", peerURL, err)
+		}
+		peerAddr := fmt.Sprintf("http://%s:26657", u.Hostname())
 		peers[peerAddr] = &tendermintPeerInfo{
 			Addr:      peerAddr,
 			Client:    client.NewHTTP(peerAddr, "/websocket"),
@@ -49,9 +56,13 @@ func waitForTendermintNetworkPeers(
 		if remainingTimeout < 0 {
 			return nil, fmt.Errorf("timed out waiting for Tendermint peer crawl to complete")
 		}
-		peers, err = getTendermintNetworkPeers(peers, remainingTimeout)
+		newPeers, err := getTendermintNetworkPeers(peers, remainingTimeout, logger)
 		if err != nil {
 			return nil, err
+		}
+		// we only care if we've discovered more peers than in the previous attempt
+		if len(newPeers) > len(peers) {
+			peers = newPeers
 		}
 		if len(peers) >= minPeers {
 			logger.Info("All required peers connected", "count", len(peers))
@@ -59,6 +70,7 @@ func waitForTendermintNetworkPeers(
 			return peerMapToList(peers, minPeers), nil
 		} else {
 			logger.Debug("Peers discovered so far", "count", len(peers), "peers", peers)
+			time.Sleep(1 * time.Second)
 		}
 	}
 }
@@ -68,21 +80,24 @@ func waitForTendermintNetworkPeers(
 func getTendermintNetworkPeers(
 	peers map[string]*tendermintPeerInfo, // Any existing peers we know about already
 	timeout time.Duration, // Maximum timeout for the entire operation
+	logger logging.Logger,
 ) (map[string]*tendermintPeerInfo, error) {
 	startTime := time.Now()
 	peerInfoc := make(chan *tendermintPeerInfo, len(peers))
 	errc := make(chan error, len(peers))
+	logger.Debug("Querying peers for more peers", "count", len(peers))
 	// parallelize querying all the Tendermint nodes' peers
 	for _, peer := range peers {
 		go func(peer_ *tendermintPeerInfo) {
 			netInfo, err := peer_.Client.NetInfo()
 			if err != nil {
+				logger.Debug("Failed to query peer - skipping", "addr", peer_.Addr, "err", err)
 				errc <- err
 				return
 			}
 			peerAddrs := make([]string, 0)
 			for _, peerInfo := range netInfo.Peers {
-				peerAddrs = append(peerAddrs, fmt.Sprintf("tcp://%s:26657", peerInfo.RemoteIP))
+				peerAddrs = append(peerAddrs, fmt.Sprintf("http://%s:26657", peerInfo.RemoteIP))
 			}
 			peerInfoc <- &tendermintPeerInfo{
 				Addr:      peer_.Addr,
@@ -103,13 +118,16 @@ func getTendermintNetworkPeers(
 		case peerInfo := <-peerInfoc:
 			result[peerInfo.Addr] = peerInfo
 			receivedNetInfoResults++
-			if receivedNetInfoResults >= expectedNetInfoResults {
-				return resolveTendermintPeerMap(result), nil
-			}
-		case err := <-errc:
-			return nil, err
+		case <-errc:
+			receivedNetInfoResults++
 		case <-time.After(remainingTimeout):
 			return nil, fmt.Errorf("timed out while waiting for all peer network info to be returned")
+		}
+		if receivedNetInfoResults >= expectedNetInfoResults {
+			return resolveTendermintPeerMap(result), nil
+		} else {
+			// wait a little before polling  again
+			time.Sleep(1 * time.Second)
 		}
 	}
 }
