@@ -25,6 +25,10 @@ const (
 	masterCompleted        = 5
 )
 
+// The rate at which the master logs progress and updates the Prometheus metrics
+// it's writing out.
+const masterProgressUpdateInterval = 5 * time.Second
+
 // Master is a WebSockets server that allows slaves to connect to it to obtain
 // configuration information. It does nothing but coordinate load testing
 // amongst the slaves.
@@ -52,6 +56,8 @@ type Master struct {
 	// Prometheus metrics
 	stateMetric    prometheus.Gauge // A code-based status metric for representing the master's current state.
 	totalTxsMetric prometheus.Gauge // The total number of transactions sent by all slaves.
+	txRateMetric   prometheus.Gauge // The transaction throughput rate (tx/sec) as measured by the master since the last metrics update.
+	overallTxRateMetric prometheus.Gauge // The overall transaction throughput rate (tx/sec) as measured by the master since the beginning of the load test.
 }
 
 type remoteSlaveRegisterRequest struct {
@@ -89,6 +95,14 @@ func NewMaster(cfg *Config, masterCfg *MasterConfig) *Master {
 		totalTxsMetric: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "tmloadtest_master_total_txs",
 			Help: "The total cumulative number of transactions sent by all slaves",
+		}),
+		txRateMetric: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "tmloadtest_master_tx_rate",
+			Help: "The current transaction throughput rate as seen by the tm-load-test master, summed across all slaves",
+		}),
+		overallTxRateMetric: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "tmloadtest_master_overall_tx_rate",
+			Help: "The overall transaction throughput rate as seen by the tm-load-test master since the beginning of the load test",
 		}),
 	}
 	mux := http.NewServeMux()
@@ -213,7 +227,7 @@ func (m *Master) receiveTestingUpdates() error {
 
 	completed := 0
 
-	progressTicker := time.NewTicker(5 * time.Second)
+	progressTicker := time.NewTicker(masterProgressUpdateInterval)
 	defer progressTicker.Stop()
 
 	m.startTime = time.Now()
@@ -342,6 +356,8 @@ func (m *Master) logTestingProgress() {
 
 	m.lastProgressUpdate = time.Now()
 	m.totalTxsMetric.Set(float64(totalTxs))
+	m.txRateMetric.Set(avgRate)
+	m.overallTxRateMetric.Set(overallAvgRate)
 }
 
 func (m *Master) startLoadTest() error {
