@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.0
+* [\#23](https://github.com/interchainio/tm-load-test/pull/23) - Add
+  feature to wait for Tendermint network stabilization before starting load
+  testing (in standalone and master/slave modes).
+* [\#28](https://github.com/interchainio/tm-load-test/pull/28) - Expose the
+  tx throughput rates via Prometheus.
+
+## v0.4.2
+* Adds version sub-command to the CLI
+
 ## v0.4.1
 * [\#21](https://github.com/interchainio/tm-load-test/pull/21) - Add support
   for exposing Prometheus-compatible metrics from the MASTER web server via
