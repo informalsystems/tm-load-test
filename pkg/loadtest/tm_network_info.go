@@ -2,6 +2,7 @@ package loadtest
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"time"
 
@@ -11,9 +12,10 @@ import (
 
 // tendermintPeerInfo is returned when polling the Tendermint RPC endpoint.
 type tendermintPeerInfo struct {
-	Addr      string        // The address of the peer itself.
-	Client    client.Client // The client to use to query this peer's Tendermint RPC endpoint.
-	PeerAddrs []string      // The peers of this peer.
+	Addr                string        // The address of the peer itself.
+	Client              client.Client // The client to use to query this peer's Tendermint RPC endpoint.
+	PeerAddrs           []string      // The peers of this peer.
+	SuccessfullyQueried bool          // Has this peer been successfully queried?
 }
 
 // Waits for the given minimum number of peers to be present on the Tendermint
@@ -29,6 +31,7 @@ func waitForTendermintNetworkPeers(
 	startingPeerAddrs []string,
 	selectionMethod string,
 	minDiscoveredPeers int,
+	minPeerConnectivity int,
 	maxReturnedPeers int,
 	timeout time.Duration,
 	logger logging.Logger,
@@ -41,6 +44,9 @@ func waitForTendermintNetworkPeers(
 		"selectionMethod", selectionMethod,
 	)
 
+	cancelc := make(chan struct{}, 1)
+	cancelTrap := trapInterrupts(func() { close(cancelc); }, logger);
+	defer close(cancelTrap);
 	startTime := time.Now()
 	suppliedPeers := make(map[string]*tendermintPeerInfo)
 	for _, peerURL := range startingPeerAddrs {
@@ -48,7 +54,16 @@ func waitForTendermintNetworkPeers(
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse peer URL %s: %s", peerURL, err)
 		}
-		peerAddr := fmt.Sprintf("http://%s:26657", u.Hostname())
+
+		// find the first IPv4 address for our supplied peer URL (this helps
+		// with deduplication of peer addresses, since peer address books
+		// usually just contain the IP addresses of other peers)
+		peerIP, err := lookupFirstIPv4Addr(u.Hostname())
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve IP address for endpoint %s: %s", peerURL, err)
+		}
+
+		peerAddr := fmt.Sprintf("http://%s:26657", peerIP)
 		suppliedPeers[peerAddr] = &tendermintPeerInfo{
 			Addr:      peerAddr,
 			Client:    client.NewHTTP(peerAddr, "/websocket"),
@@ -65,7 +80,7 @@ func waitForTendermintNetworkPeers(
 		if remainingTimeout < 0 {
 			return nil, fmt.Errorf("timed out waiting for Tendermint peer crawl to complete")
 		}
-		newPeers, err := getTendermintNetworkPeers(peers, remainingTimeout, logger)
+		newPeers, err := getTendermintNetworkPeers(peers, remainingTimeout, cancelc, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -73,12 +88,19 @@ func waitForTendermintNetworkPeers(
 		if len(newPeers) > len(peers) {
 			peers = newPeers
 		}
-		if len(peers) >= minDiscoveredPeers {
-			logger.Info("All required peers connected", "count", len(peers))
+		peerCount := len(peers)
+		peerConnectivity := getMinPeerConnectivity(peers)
+		if peerCount >= minDiscoveredPeers && peerConnectivity >= minPeerConnectivity {
+			logger.Info("All required peers connected", "count", peerCount, "minConnectivity", minPeerConnectivity)
 			// we're done here
 			return filterTendermintPeerMap(suppliedPeers, peers, selectionMethod, maxReturnedPeers), nil
 		} else {
-			logger.Debug("Peers discovered so far", "count", len(peers), "peers", peers)
+			logger.Debug(
+				"Peers discovered so far",
+				"count", peerCount,
+				"minConnectivity", peerConnectivity,
+				"remainingTimeout", timeout-time.Since(startTime),
+			)
 			time.Sleep(1 * time.Second)
 		}
 	}
@@ -88,15 +110,19 @@ func waitForTendermintNetworkPeers(
 // peers across the entire network.
 func getTendermintNetworkPeers(
 	peers map[string]*tendermintPeerInfo, // Any existing peers we know about already
-	timeout time.Duration, // Maximum timeout for the entire operation
+	timeout time.Duration,                // Maximum timeout for the entire operation
+	cancelc chan struct{},                // Allows us to cancel the polling operations
 	logger logging.Logger,
 ) (map[string]*tendermintPeerInfo, error) {
 	startTime := time.Now()
 	peerInfoc := make(chan *tendermintPeerInfo, len(peers))
 	errc := make(chan error, len(peers))
-	logger.Debug("Querying peers for more peers", "count", len(peers))
+	logger.Debug("Querying peers for more peers", "count", len(peers), "peers", getPeerAddrs(peers))
 	// parallelize querying all the Tendermint nodes' peers
 	for _, peer := range peers {
+		// reset this every time
+		peer.SuccessfullyQueried = false
+
 		go func(peer_ *tendermintPeerInfo) {
 			netInfo, err := peer_.Client.NetInfo()
 			if err != nil {
@@ -109,9 +135,10 @@ func getTendermintNetworkPeers(
 				peerAddrs = append(peerAddrs, fmt.Sprintf("http://%s:26657", peerInfo.RemoteIP))
 			}
 			peerInfoc <- &tendermintPeerInfo{
-				Addr:      peer_.Addr,
-				Client:    peer_.Client,
-				PeerAddrs: peerAddrs,
+				Addr:                peer_.Addr,
+				Client:              peer_.Client,
+				PeerAddrs:           peerAddrs,
+				SuccessfullyQueried: true,
 			}
 		}(peer)
 	}
@@ -124,6 +151,8 @@ func getTendermintNetworkPeers(
 			return nil, fmt.Errorf("timed out waiting for all peer network info to be returned")
 		}
 		select {
+		case <-cancelc:
+			return nil, fmt.Errorf("cancel signal received")
 		case peerInfo := <-peerInfoc:
 			result[peerInfo.Addr] = peerInfo
 			receivedNetInfoResults++
@@ -187,4 +216,41 @@ func filterTendermintPeerMap(suppliedPeers, newPeers map[string]*tendermintPeerI
 		}
 	}
 	return result
+}
+
+func getMinPeerConnectivity(peers map[string]*tendermintPeerInfo) int {
+	minPeers := len(peers)
+	for _, peer := range peers {
+		// we only care about peers we've successfully queried so far
+		if !peer.SuccessfullyQueried {
+			continue
+		}
+		peerCount := len(peer.PeerAddrs)
+		if peerCount > 0 && peerCount < minPeers {
+			minPeers = peerCount
+		}
+	}
+	return minPeers
+}
+
+func getPeerAddrs(peers map[string]*tendermintPeerInfo) []string {
+	results := make([]string, 0);
+	for _, peer := range peers {
+		results = append(results, peer.Addr)
+	}
+	return results
+}
+
+func lookupFirstIPv4Addr(hostname string) (string, error) {
+	ipRecords, err := net.LookupIP(hostname)
+	if err != nil {
+		return "", err
+	}
+	for _, ipRecord := range ipRecords {
+		ipv4 := ipRecord.To4()
+		if ipv4 != nil {
+			return ipv4.String(), nil
+		}
+	}
+	return "", fmt.Errorf("no IPv4 records for hostname: %s", hostname)
 }
