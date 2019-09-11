@@ -354,6 +354,7 @@ func (m *Master) logTestingProgress() {
 	)
 
 	m.lastProgressUpdate = time.Now()
+	m.totalTxs = totalTxs
 	m.totalTxsMetric.Set(float64(totalTxs))
 	m.txRateMetric.Set(avgRate)
 	m.overallTxRateMetric.Set(overallAvgRate)
