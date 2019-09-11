@@ -217,9 +217,7 @@ func (m *Master) waitForPeers() error {
 	if err != nil {
 		return err
 	}
-	if m.cfg.EndpointSelectMethod == SelectDiscoveredEndpoints {
-		m.cfg.Endpoints = peers
-	}
+	m.cfg.Endpoints = peers
 	return nil
 }
 
