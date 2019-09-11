@@ -6,13 +6,15 @@ import (
 )
 
 const (
-	SelectGivenEndpoints   = "given-endpoints"   // Select only the given endpoint(s) for load testing (the default).
-	SelectCrawledEndpoints = "crawled-endpoints" // Select all crawled endpoint addresses (only valid if ExpectPeers is specified in the configuration).
+	SelectSuppliedEndpoints   = "supplied"   // Select only the supplied endpoint(s) for load testing (the default).
+	SelectDiscoveredEndpoints = "discovered" // Select newly discovered endpoints only (excluding supplied endpoints).
+	SelectAnyEndpoints        = "any"        // Select from any of supplied and/or discovered endpoints.
 )
 
 var validEndpointSelectMethods = map[string]interface{}{
-	SelectGivenEndpoints: nil,
-	SelectCrawledEndpoints: nil,
+	SelectSuppliedEndpoints:   nil,
+	SelectDiscoveredEndpoints: nil,
+	SelectAnyEndpoints:        nil,
 }
 
 // Config represents the configuration for a single client (i.e. standalone or
@@ -29,6 +31,7 @@ type Config struct {
 	Endpoints            []string `json:"endpoints"`              // A list of the Tendermint node endpoints to which to connect for this load test.
 	EndpointSelectMethod string   `json:"endpoint_select_method"` // The method by which to select endpoints for load testing.
 	ExpectPeers          int      `json:"expect_peers"`           // The minimum number of peers to expect before starting a load test. Set to 0 by default (no minimum).
+	MaxEndpoints         int      `json:"max_endpoints"`          // The maximum number of endpoints to use for load testing. Set to 0 by default (no maximum).
 	PeerConnectTimeout   int      `json:"peer_connect_timeout"`   // The maximum time to wait (in seconds) for all peers to connect, if ExpectPeers > 0.
 }
 
@@ -92,6 +95,9 @@ func (c Config) Validate() error {
 	}
 	if c.ExpectPeers > 0 && c.PeerConnectTimeout < 1 {
 		return fmt.Errorf("peer-connect-timeout must be at least 1 if expect-peers is non-zero, but got %d", c.PeerConnectTimeout)
+	}
+	if c.MaxEndpoints < 0 {
+		return fmt.Errorf("invalid value for max-endpoints: %d", c.MaxEndpoints)
 	}
 	return nil
 }

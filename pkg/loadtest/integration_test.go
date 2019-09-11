@@ -148,7 +148,7 @@ func testConfig() loadtest.Config {
 		Count:                totalTxsPerSlave,
 		BroadcastTxMethod:    "async",
 		Endpoints:            []string{getRPCAddress()},
-		EndpointSelectMethod: loadtest.SelectGivenEndpoints,
+		EndpointSelectMethod: loadtest.SelectSuppliedEndpoints,
 	}
 }
 

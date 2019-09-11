@@ -27,29 +27,38 @@ type tendermintPeerInfo struct {
 //       must be present when polled repeatedly for a period of time).
 func waitForTendermintNetworkPeers(
 	startingPeerAddrs []string,
-	minPeers int,
+	selectionMethod string,
+	minDiscoveredPeers int,
+	maxReturnedPeers int,
 	timeout time.Duration,
 	logger logging.Logger,
 ) ([]string, error) {
 	logger.Info(
 		"Waiting for peers to connect",
-		"minPeers", minPeers,
+		"minDiscoveredPeers", minDiscoveredPeers,
+		"maxReturnedPeers", maxReturnedPeers,
 		"timeout", fmt.Sprintf("%.2f seconds", timeout.Seconds()),
+		"selectionMethod", selectionMethod,
 	)
 
 	startTime := time.Now()
-	peers := make(map[string]*tendermintPeerInfo)
+	suppliedPeers := make(map[string]*tendermintPeerInfo)
 	for _, peerURL := range startingPeerAddrs {
 		u, err := url.Parse(peerURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse peer URL %s: %s", peerURL, err)
 		}
 		peerAddr := fmt.Sprintf("http://%s:26657", u.Hostname())
-		peers[peerAddr] = &tendermintPeerInfo{
+		suppliedPeers[peerAddr] = &tendermintPeerInfo{
 			Addr:      peerAddr,
 			Client:    client.NewHTTP(peerAddr, "/websocket"),
 			PeerAddrs: make([]string, 0),
 		}
+	}
+	peers := make(map[string]*tendermintPeerInfo)
+	for a, p := range suppliedPeers {
+		pc := *p
+		peers[a] = &pc
 	}
 	for {
 		remainingTimeout := timeout - time.Since(startTime)
@@ -64,10 +73,10 @@ func waitForTendermintNetworkPeers(
 		if len(newPeers) > len(peers) {
 			peers = newPeers
 		}
-		if len(peers) >= minPeers {
+		if len(peers) >= minDiscoveredPeers {
 			logger.Info("All required peers connected", "count", len(peers))
 			// we're done here
-			return peerMapToList(peers, minPeers), nil
+			return filterTendermintPeerMap(suppliedPeers, peers, selectionMethod, maxReturnedPeers), nil
 		} else {
 			logger.Debug("Peers discovered so far", "count", len(peers), "peers", peers)
 			time.Sleep(1 * time.Second)
@@ -150,10 +159,29 @@ func resolveTendermintPeerMap(peers map[string]*tendermintPeerInfo) map[string]*
 	return result
 }
 
-func peerMapToList(peers map[string]*tendermintPeerInfo, maxCount int) []string {
+func filterTendermintPeerMap(suppliedPeers, newPeers map[string]*tendermintPeerInfo, selectionMethod string, maxCount int) []string {
 	result := make([]string, 0)
-	for _, peer := range peers {
-		result = append(result, peer.Addr)
+	for peerAddr := range newPeers {
+		u, err := url.Parse(peerAddr)
+		if err != nil {
+			continue
+		}
+		addr := fmt.Sprintf("ws://%s:26657/websocket", u.Hostname())
+		switch selectionMethod {
+		case SelectSuppliedEndpoints:
+			// only add it to the result if it was in the original list
+			if _, ok := suppliedPeers[peerAddr]; ok {
+				result = append(result, addr)
+			}
+		case SelectDiscoveredEndpoints:
+			// only add it to the result if it wasn't in the original list
+			if _, ok := suppliedPeers[peerAddr]; !ok {
+				result = append(result, addr)
+			}
+		default:
+			// otherwise, always add it
+			result = append(result, addr)
+		}
 		if len(result) >= maxCount {
 			break
 		}

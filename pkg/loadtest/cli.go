@@ -58,8 +58,9 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 	rootCmd.PersistentFlags().IntVarP(&cfg.Count, "count", "N", -1, "The maximum number of transactions to send - set to -1 to turn off this limit")
 	rootCmd.PersistentFlags().StringVar(&cfg.BroadcastTxMethod, "broadcast-tx-method", "async", "The broadcast_tx method to use when submitting transactions - can be async, sync or commit")
 	rootCmd.PersistentFlags().StringSliceVar(&cfg.Endpoints, "endpoints", []string{}, "A comma-separated list of URLs indicating Tendermint WebSockets RPC endpoints to which to connect")
-	rootCmd.PersistentFlags().StringVar(&cfg.EndpointSelectMethod, "endpoint-select-method", SelectGivenEndpoints, "The method by which to select endpoints")
+	rootCmd.PersistentFlags().StringVar(&cfg.EndpointSelectMethod, "endpoint-select-method", SelectSuppliedEndpoints, "The method by which to select endpoints")
 	rootCmd.PersistentFlags().IntVar(&cfg.ExpectPeers, "expect-peers", 0, "The minimum number of peers to expect when crawling the P2P network from the specified endpoint(s) prior to waiting for slaves to connect")
+	rootCmd.PersistentFlags().IntVar(&cfg.MaxEndpoints, "max-endpoints", 0, "The maximum number of endpoints to use for testing, where 0 means unlimited")
 	rootCmd.PersistentFlags().IntVar(&cfg.PeerConnectTimeout, "peer-connect-timeout", 600, "The number of seconds to wait for all required peers to connect if expect-peers > 0")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Increase output logging verbosity to DEBUG level")
 
