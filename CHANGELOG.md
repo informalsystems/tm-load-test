@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.6.1
+* [\#35](https://github.com/interchainio/tm-load-test/pull/35) - Minor fix for
+  broken shutdown-wait functionality.
+
 ## v0.6.0
 * [\#33](https://github.com/interchainio/tm-load-test/pull/33) - Add ability
   to wait for a minimum level of connectivity between peers before starting the
