@@ -160,7 +160,7 @@ func trapInterrupts(onKill func(), logger logging.Logger) chan struct{} {
 			logger.Info("Caught kill signal")
 			onKill()
 		case <-cancelTrap:
-			return
+			logger.Debug("Interrupt trap cancelled")
 		}
 	}()
 	return cancelTrap
