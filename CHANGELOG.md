@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.6.2
+* [\#37](https://github.com/interchainio/tm-load-test/pull/37) - Fix average
+  transaction throughput rate in reporting/metrics.
+
 ## v0.6.1
 * [\#35](https://github.com/interchainio/tm-load-test/pull/35) - Minor fix for
   broken shutdown-wait functionality.
