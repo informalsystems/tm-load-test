@@ -98,6 +98,17 @@ endpoints are selected for load testing. There are several options:
 if `--expect-peers` is not supplied is effectively the `supplied` endpoint
 selection strategy.
 
+### Minimum Peer Connectivity
+As of v0.6.0, `tm-load-test` can now wait for a minimum level of P2P 
+connectivity before starting the load testing. By using the 
+`--min-peer-connectivity` command line switch, along with `--expect-peers`, one
+can restrict this.
+
+What this does under the hood is that it checks how many peers are in each
+queried peer's address book, and for all reachable peers it checks what the
+minimum address book size is. Once the minimum address book size reaches the
+configured value, the load testing can begin.
+
 ### Customizing
 To implement your own client type to load test your own Tendermint ABCI
 application, see the [`loadtest` package docs here](./pkg/loadtest/README.md).
