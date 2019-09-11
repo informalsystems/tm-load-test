@@ -32,6 +32,7 @@ type Config struct {
 	EndpointSelectMethod string   `json:"endpoint_select_method"` // The method by which to select endpoints for load testing.
 	ExpectPeers          int      `json:"expect_peers"`           // The minimum number of peers to expect before starting a load test. Set to 0 by default (no minimum).
 	MaxEndpoints         int      `json:"max_endpoints"`          // The maximum number of endpoints to use for load testing. Set to 0 by default (no maximum).
+	MinConnectivity      int      `json:"min_connectivity"`       // The minimum number of peers to which each peer must be connected before starting the load test. Set to 0 by default (no minimum).
 	PeerConnectTimeout   int      `json:"peer_connect_timeout"`   // The maximum time to wait (in seconds) for all peers to connect, if ExpectPeers > 0.
 }
 
@@ -98,6 +99,9 @@ func (c Config) Validate() error {
 	}
 	if c.MaxEndpoints < 0 {
 		return fmt.Errorf("invalid value for max-endpoints: %d", c.MaxEndpoints)
+	}
+	if c.MinConnectivity < 0 {
+		return fmt.Errorf("invalid value for min-peer-connectivity: %d", c.MinConnectivity)
 	}
 	return nil
 }

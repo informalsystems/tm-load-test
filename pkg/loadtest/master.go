@@ -120,6 +120,16 @@ func NewMaster(cfg *Config, masterCfg *MasterConfig) *Master {
 // Run will execute the master's operations in a blocking manner, returning
 // any error that causes one of the slaves or the master to fail.
 func (m *Master) Run() error {
+	// if we care about how many peers are connected in the network, wait
+	// for a minimum number of them to connect before even listening for
+	// incoming slave connections
+	if m.cfg.ExpectPeers > 0 {
+		if err := m.waitForPeers(); err != nil {
+			m.stateMetric.Set(masterFailed)
+			return err
+		}
+	}
+
 	defer func() {
 		// stop all remote slave event loops
 		m.stopRemoteSlaves()
@@ -138,16 +148,6 @@ func (m *Master) Run() error {
 		m.stateMetric.Set(masterFailed)
 	}, m.logger)
 	defer close(cancelTrap)
-
-	// if we care about how many peers are connected in the network, wait
-	// for a minimum number of them to connect before even listening for
-	// incoming slave connections
-	if m.cfg.ExpectPeers > 0 {
-		if err := m.waitForPeers(); err != nil {
-			m.stateMetric.Set(masterFailed)
-			return err
-		}
-	}
 
 	// we run the WebSockets server in the background
 	go m.runServer()
@@ -210,11 +210,13 @@ func (m *Master) waitForPeers() error {
 		m.cfg.Endpoints,
 		m.cfg.EndpointSelectMethod,
 		m.cfg.ExpectPeers,
+		m.cfg.MinConnectivity,
 		m.cfg.MaxEndpoints,
 		time.Duration(m.cfg.PeerConnectTimeout)*time.Second,
 		m.logger,
 	)
 	if err != nil {
+		m.logger.Error("Failed while waiting for peers to connect", "err", err)
 		return err
 	}
 	m.cfg.Endpoints = peers

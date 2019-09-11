@@ -15,6 +15,7 @@ func executeLoadTest(cfg Config) error {
 			cfg.Endpoints,
 			cfg.EndpointSelectMethod,
 			cfg.ExpectPeers,
+			cfg.MinConnectivity,
 			cfg.MaxEndpoints,
 			time.Duration(cfg.PeerConnectTimeout)*time.Second,
 			logger,
