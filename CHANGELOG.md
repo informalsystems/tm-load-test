@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.6.0
+* [\#33](https://github.com/interchainio/tm-load-test/pull/33) - Add ability
+  to wait for a minimum level of connectivity between peers before starting the
+  load testing (through a `--min-peer-connectivity` command line switch).
+
 ## v0.5.1
 * [\#31](https://github.com/interchainio/tm-load-test/pull/31) - Expand on
   endpoint selection strategy to now allow for 3 different strategies:
