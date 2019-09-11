@@ -23,9 +23,7 @@ func executeLoadTest(cfg Config) error {
 			logger.Error("Failed while waiting for peers to connect", "err", err)
 			return err
 		}
-		if cfg.EndpointSelectMethod == SelectDiscoveredEndpoints {
-			cfg.Endpoints = peers
-		}
+		cfg.Endpoints = peers
 	}
 
 	logger.Info("Connecting to remote endpoints")
