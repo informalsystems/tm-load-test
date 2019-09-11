@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -58,6 +59,9 @@ type Master struct {
 	totalTxsMetric      prometheus.Gauge // The total number of transactions sent by all slaves.
 	txRateMetric        prometheus.Gauge // The transaction throughput rate (tx/sec) as measured by the master since the last metrics update.
 	overallTxRateMetric prometheus.Gauge // The overall transaction throughput rate (tx/sec) as measured by the master since the beginning of the load test.
+
+	mtx       sync.Mutex
+	cancelled bool
 }
 
 type remoteSlaveRegisterRequest struct {
@@ -130,24 +134,17 @@ func (m *Master) Run() error {
 		}
 	}
 
-	defer func() {
-		// stop all remote slave event loops
-		m.stopRemoteSlaves()
-		// gracefully shut down the WebSockets server
-		m.shutdownServer()
-		select {
-		case <-m.svrStopped:
-		case <-time.After(masterShutdownTimeout):
-			m.logger.Error("Failed to shut down within the required time period")
-		}
-	}()
+	defer m.gracefulShutdown()
 
 	// we want to know if the user hits Ctrl+Break
 	cancelTrap := trapInterrupts(func() {
+		m.setCancelled(true)
 		close(m.stop)
 		m.stateMetric.Set(masterFailed)
 	}, m.logger)
-	defer close(cancelTrap)
+	defer func() {
+		close(cancelTrap)
+	}()
 
 	// we run the WebSockets server in the background
 	go m.runServer()
@@ -409,9 +406,17 @@ func (m *Master) runServer() {
 
 // Graceful shutdown for the web server.
 func (m *Master) shutdownServer() {
-	if m.masterCfg.ShutdownWait > 0 {
+	// we only care about the shutdown wait period if we haven't been killed
+	if !m.wasCancelled() && m.masterCfg.ShutdownWait > 0 {
 		m.logger.Info("Entering post-shutdown wait period", "wait", fmt.Sprintf("%ds", m.masterCfg.ShutdownWait))
-		time.Sleep(time.Duration(m.masterCfg.ShutdownWait) * time.Second)
+		cancelSleep := make(chan struct{})
+		cancelTrap := trapInterrupts(func() { close(cancelSleep); }, m.logger)
+		select {
+		case <-cancelSleep:
+			m.logger.Info("Cancelling shutdown wait")
+		case <-time.After(time.Duration(m.masterCfg.ShutdownWait) * time.Second):
+		}
+		close(cancelTrap)
 	}
 	m.logger.Info("Shutting down web server")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -437,4 +442,28 @@ func (m *Master) stopRemoteSlaves() {
 	for _, rs := range m.slaves {
 		rs.Stop()
 	}
+}
+
+func (m *Master) gracefulShutdown() {
+	// stop all remote slave event loops
+	m.stopRemoteSlaves()
+	// gracefully shut down the WebSockets server
+	m.shutdownServer()
+	select {
+	case <-m.svrStopped:
+	case <-time.After(masterShutdownTimeout):
+		m.logger.Error("Failed to shut down within the required time period")
+	}
+}
+
+func (m *Master) setCancelled(cancelled bool) {
+	m.mtx.Lock()
+	m.cancelled = true
+	m.mtx.Unlock()
+}
+
+func (m *Master) wasCancelled() bool {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	return m.cancelled
 }
