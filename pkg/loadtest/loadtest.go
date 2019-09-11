@@ -13,7 +13,9 @@ func executeLoadTest(cfg Config) error {
 	if cfg.ExpectPeers > 0 {
 		peers, err := waitForTendermintNetworkPeers(
 			cfg.Endpoints,
+			cfg.EndpointSelectMethod,
 			cfg.ExpectPeers,
+			cfg.MaxEndpoints,
 			time.Duration(cfg.PeerConnectTimeout)*time.Second,
 			logger,
 		)
@@ -21,7 +23,7 @@ func executeLoadTest(cfg Config) error {
 			logger.Error("Failed while waiting for peers to connect", "err", err)
 			return err
 		}
-		if cfg.EndpointSelectMethod == SelectCrawledEndpoints {
+		if cfg.EndpointSelectMethod == SelectDiscoveredEndpoints {
 			cfg.Endpoints = peers
 		}
 	}

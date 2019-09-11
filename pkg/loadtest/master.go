@@ -54,9 +54,9 @@ type Master struct {
 	totalTxsPerSlave   map[string]int // The number of transactions sent by each slave.
 
 	// Prometheus metrics
-	stateMetric    prometheus.Gauge // A code-based status metric for representing the master's current state.
-	totalTxsMetric prometheus.Gauge // The total number of transactions sent by all slaves.
-	txRateMetric   prometheus.Gauge // The transaction throughput rate (tx/sec) as measured by the master since the last metrics update.
+	stateMetric         prometheus.Gauge // A code-based status metric for representing the master's current state.
+	totalTxsMetric      prometheus.Gauge // The total number of transactions sent by all slaves.
+	txRateMetric        prometheus.Gauge // The transaction throughput rate (tx/sec) as measured by the master since the last metrics update.
 	overallTxRateMetric prometheus.Gauge // The overall transaction throughput rate (tx/sec) as measured by the master since the beginning of the load test.
 }
 
@@ -208,14 +208,16 @@ func (m *Master) waitForPeers() error {
 	m.stateMetric.Set(masterWaitingForPeers)
 	peers, err := waitForTendermintNetworkPeers(
 		m.cfg.Endpoints,
+		m.cfg.EndpointSelectMethod,
 		m.cfg.ExpectPeers,
+		m.cfg.MaxEndpoints,
 		time.Duration(m.cfg.PeerConnectTimeout)*time.Second,
 		m.logger,
 	)
 	if err != nil {
 		return err
 	}
-	if m.cfg.EndpointSelectMethod == SelectCrawledEndpoints {
+	if m.cfg.EndpointSelectMethod == SelectDiscoveredEndpoints {
 		m.cfg.Endpoints = peers
 	}
 	return nil
