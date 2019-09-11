@@ -80,6 +80,24 @@ tm-load-test master --help
 tm-load-test slave --help
 ```
 
+### Endpoint Selection Strategies
+As of v0.5.1, an endpoint selection strategy can now be given to `tm-load-test`
+as a parameter (`--endpoint-select-method`) to control the way in which 
+endpoints are selected for load testing. There are several options:
+
+1. `supplied` (the default) - only use the supplied endpoints (via the 
+   `--endpoints` parameter) to submit transactions.
+2. `discovered` - only use endpoints discovered through the supplied endpoints
+   (by way of crawling the Tendermint peers' network info), but do not use any
+   of the supplied endpoints.
+3. `any` - use both the supplied and discovered endpoints to perform load 
+   testing.
+
+**NOTE**: These selection strategies only apply if, and only if, the 
+`--expect-peers` parameter is supplied and is non-zero. The default behaviour
+if `--expect-peers` is not supplied is effectively the `supplied` endpoint
+selection strategy.
+
 ### Customizing
 To implement your own client type to load test your own Tendermint ABCI
 application, see the [`loadtest` package docs here](./pkg/loadtest/README.md).

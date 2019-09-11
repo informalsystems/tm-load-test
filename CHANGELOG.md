@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.1
+* [\#31](https://github.com/interchainio/tm-load-test/pull/31) - Expand on
+  endpoint selection strategy to now allow for 3 different strategies:
+  `supplied`, `discovered` and `any`. Allows for specifying of a seed node
+  endpoint that one doesn't want to use during the actual load testing.
+
 ## v0.5.0
 * [\#23](https://github.com/interchainio/tm-load-test/pull/23) - Add
   feature to wait for Tendermint network stabilization before starting load
