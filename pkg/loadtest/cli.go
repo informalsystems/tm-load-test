@@ -12,7 +12,7 @@ import (
 )
 
 // CLIVersion must be manually updated as new versions are released.
-const CLIVersion = "v0.7.0"
+const CLIVersion = "v0.8.0"
 
 // cliVersionCommitID must be set through linker settings. See
 // https://stackoverflow.com/a/11355611/1156132 for details.
@@ -91,6 +91,7 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 	masterCmd.PersistentFlags().IntVar(&masterCfg.ExpectSlaves, "expect-slaves", 2, "The number of slaves to expect to connect to the master before starting load testing")
 	masterCmd.PersistentFlags().IntVar(&masterCfg.SlaveConnectTimeout, "connect-timeout", 180, "The maximum number of seconds to wait for all slaves to connect")
 	masterCmd.PersistentFlags().IntVar(&masterCfg.ShutdownWait, "shutdown-wait", 0, "The number of seconds to wait after testing completes prior to shutting down the web server")
+	masterCmd.PersistentFlags().IntVar(&masterCfg.LoadTestID, "load-test-id", 0, "The ID of the load test currently underway")
 
 	var slaveCfg SlaveConfig
 	slaveCmd := &cobra.Command{

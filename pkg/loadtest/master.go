@@ -60,6 +60,7 @@ type Master struct {
 	txRateMetric          prometheus.Gauge // The transaction throughput rate (tx/sec) as measured by the master since the last metrics update.
 	overallTxRateMetric   prometheus.Gauge // The overall transaction throughput rate (tx/sec) as measured by the master since the beginning of the load test.
 	slavesCompletedMetric prometheus.Gauge // The total number of slaves that have completed their testing.
+	testUnderwayMetric    prometheus.Gauge // The ID of the load test currently underway (-1 if none).
 
 	mtx       sync.Mutex
 	cancelled bool
@@ -113,6 +114,10 @@ func NewMaster(cfg *Config, masterCfg *MasterConfig) *Master {
 			Name: "tmloadtest_master_slaves_completed",
 			Help: "The total number of slaves that have completed their testing so far",
 		}),
+		testUnderwayMetric: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "tmloadtest_master_test_underway",
+			Help: "The ID of the load test currently underway (-1 if none)",
+		}),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", master.newWebSocketHandler())
@@ -123,6 +128,7 @@ func NewMaster(cfg *Config, masterCfg *MasterConfig) *Master {
 	}
 	master.svr = svr
 	master.stateMetric.Set(masterStarting)
+	master.testUnderwayMetric.Set(-1)
 	return master
 }
 
@@ -228,6 +234,12 @@ func (m *Master) waitForPeers() error {
 func (m *Master) receiveTestingUpdates() error {
 	m.logger.Info("Watching for slave updates")
 	m.stateMetric.Set(masterTesting)
+
+	// we set the current test underway ID to our configured load test ID for
+	// the duration of the test
+	m.testUnderwayMetric.Set(float64(m.masterCfg.LoadTestID))
+	// and we set it to -1 the moment all slaves are done
+	defer m.testUnderwayMetric.Set(-1)
 
 	completed := 0
 

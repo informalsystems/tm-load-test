@@ -146,6 +146,8 @@ The following kinds of metrics are made available here:
   * 5 = Slave completed load testing successfully
 * Standard Prometheus-provided metrics about the garbage collector in 
   `tm-load-test`
+* The ID of the load test currently underway (defaults to 0), set by way of the
+  `--load-test-id` flag on the master
 
 ## Aggregate Statistics
 As of `tm-load-test` v0.7.0, one can now write simple aggregate statistics to

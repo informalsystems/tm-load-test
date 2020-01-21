@@ -44,6 +44,7 @@ type MasterConfig struct {
 	ExpectSlaves        int    `json:"expect_slaves"`   // The number of slaves to expect before starting the load test.
 	SlaveConnectTimeout int    `json:"connect_timeout"` // The number of seconds to wait for all slaves to connect.
 	ShutdownWait        int    `json:"shutdown_wait"`   // The number of seconds to wait at shutdown (while keeping the HTTP server running - primarily to allow Prometheus to keep polling).
+	LoadTestID          int    `json:"load_test_id"`    // An integer greater than 0 that will be exposed via a Prometheus gauge while the load test is underway.
 }
 
 // SlaveConfig is the configuration options specific to a slave node.
@@ -125,6 +126,9 @@ func (c MasterConfig) Validate() error {
 	}
 	if c.SlaveConnectTimeout < 1 {
 		return fmt.Errorf("master connect-timeout must be at least 1 second")
+	}
+	if c.LoadTestID < 0 {
+		return fmt.Errorf("master load-test-id must be 0 or greater")
 	}
 	return nil
 }

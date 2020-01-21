@@ -1,7 +1,15 @@
 # Changelog
 
+## v0.8.0
+* [\#42](https://github.com/interchainio/tm-load-test/pull/42) - Add Prometheus
+  gauge for when load test is underway. This indicator exposes a customizable
+  load test ID.
+
+## v0.7.1
+* Re-released due to v0.7.0 being incorrectly tagged
+
 ## v0.7.0
-* [\#39](https://github.com/interchainio/tm-load-test/issues/39) - Add basic
+* [\#39](https://github.com/interchainio/tm-load-test/pull/40) - Add basic
   aggregate statistics output to CSV file.
 * Added integration test for standalone execution happy path.
 
