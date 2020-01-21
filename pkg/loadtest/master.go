@@ -55,10 +55,11 @@ type Master struct {
 	totalTxsPerSlave   map[string]int // The number of transactions sent by each slave.
 
 	// Prometheus metrics
-	stateMetric         prometheus.Gauge // A code-based status metric for representing the master's current state.
-	totalTxsMetric      prometheus.Gauge // The total number of transactions sent by all slaves.
-	txRateMetric        prometheus.Gauge // The transaction throughput rate (tx/sec) as measured by the master since the last metrics update.
-	overallTxRateMetric prometheus.Gauge // The overall transaction throughput rate (tx/sec) as measured by the master since the beginning of the load test.
+	stateMetric           prometheus.Gauge // A code-based status metric for representing the master's current state.
+	totalTxsMetric        prometheus.Gauge // The total number of transactions sent by all slaves.
+	txRateMetric          prometheus.Gauge // The transaction throughput rate (tx/sec) as measured by the master since the last metrics update.
+	overallTxRateMetric   prometheus.Gauge // The overall transaction throughput rate (tx/sec) as measured by the master since the beginning of the load test.
+	slavesCompletedMetric prometheus.Gauge // The total number of slaves that have completed their testing.
 
 	mtx       sync.Mutex
 	cancelled bool
@@ -107,6 +108,10 @@ func NewMaster(cfg *Config, masterCfg *MasterConfig) *Master {
 		overallTxRateMetric: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "tmloadtest_master_overall_tx_rate",
 			Help: "The overall transaction throughput rate as seen by the tm-load-test master since the beginning of the load test",
+		}),
+		slavesCompletedMetric: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "tmloadtest_master_slaves_completed",
+			Help: "The total number of slaves that have completed their testing so far",
 		}),
 	}
 	mux := http.NewServeMux()
@@ -254,7 +259,7 @@ func (m *Master) receiveTestingUpdates() error {
 				completed++
 				if completed >= m.masterCfg.ExpectSlaves {
 					m.logger.Info("All slaves completed their load testing")
-					m.logTestingProgress()
+					m.logTestingProgress(completed)
 					return nil
 				}
 
@@ -272,7 +277,7 @@ func (m *Master) receiveTestingUpdates() error {
 			}
 
 		case <-progressTicker.C:
-			m.logTestingProgress()
+			m.logTestingProgress(completed)
 
 		case <-m.stop:
 			m.logger.Debug("Load testing cancel signal received")
@@ -328,7 +333,7 @@ func (m *Master) ReceiveSlaveUpdate(msg slaveMsg) {
 	m.slaveUpdate <- msg
 }
 
-func (m *Master) logTestingProgress() {
+func (m *Master) logTestingProgress(completed int) {
 	totalTxs := 0
 	for _, txCount := range m.totalTxsPerSlave {
 		totalTxs += txCount
@@ -358,6 +363,14 @@ func (m *Master) logTestingProgress() {
 	m.totalTxsMetric.Set(float64(totalTxs))
 	m.txRateMetric.Set(avgRate)
 	m.overallTxRateMetric.Set(overallAvgRate)
+	m.slavesCompletedMetric.Set(float64(completed))
+
+	// if we're done and we need to write aggregate statistics
+	if completed >= m.masterCfg.ExpectSlaves && len(m.cfg.StatsOutputFile) > 0 {
+		if err := writeAggregateStats(m.cfg.StatsOutputFile, totalTxs, overallElapsed); err != nil {
+			m.logger.Error("Failed to write aggregate statistics", "err", err)
+		}
+	}
 }
 
 func (m *Master) startLoadTest() error {
@@ -411,7 +424,7 @@ func (m *Master) shutdownServer() {
 	if !m.wasCancelled() && m.masterCfg.ShutdownWait > 0 {
 		m.logger.Info("Entering post-shutdown wait period", "wait", fmt.Sprintf("%ds", m.masterCfg.ShutdownWait))
 		cancelSleep := make(chan struct{})
-		cancelTrap := trapInterrupts(func() { close(cancelSleep); }, m.logger)
+		cancelTrap := trapInterrupts(func() { close(cancelSleep) }, m.logger)
 		select {
 		case <-cancelSleep:
 			m.logger.Info("Cancelling shutdown wait")

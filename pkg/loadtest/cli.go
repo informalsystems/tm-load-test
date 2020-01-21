@@ -12,7 +12,7 @@ import (
 )
 
 // CLIVersion must be manually updated as new versions are released.
-const CLIVersion = "v0.6.2"
+const CLIVersion = "v0.7.0"
 
 // cliVersionCommitID must be set through linker settings. See
 // https://stackoverflow.com/a/11355611/1156132 for details.
@@ -44,7 +44,7 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 				os.Exit(1)
 			}
 
-			if err := executeLoadTest(cfg); err != nil {
+			if err := ExecuteStandalone(cfg); err != nil {
 				os.Exit(1)
 			}
 		},
@@ -63,6 +63,7 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 	rootCmd.PersistentFlags().IntVar(&cfg.MaxEndpoints, "max-endpoints", 0, "The maximum number of endpoints to use for testing, where 0 means unlimited")
 	rootCmd.PersistentFlags().IntVar(&cfg.PeerConnectTimeout, "peer-connect-timeout", 600, "The number of seconds to wait for all required peers to connect if expect-peers > 0")
 	rootCmd.PersistentFlags().IntVar(&cfg.MinConnectivity, "min-peer-connectivity", 0, "The minimum number of peers to which each peer must be connected before starting the load test")
+	rootCmd.PersistentFlags().StringVar(&cfg.StatsOutputFile, "stats-output", "", "Where to store aggregate statistics (in CSV format) for the load test")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Increase output logging verbosity to DEBUG level")
 
 	var masterCfg MasterConfig
