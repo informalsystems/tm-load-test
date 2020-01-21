@@ -147,6 +147,37 @@ The following kinds of metrics are made available here:
 * Standard Prometheus-provided metrics about the garbage collector in 
   `tm-load-test`
 
+## Aggregate Statistics
+As of `tm-load-test` v0.7.0, one can now write simple aggregate statistics to
+a CSV file once testing completes by specifying the `--stats-output` flag:
+
+```bash
+# In standalone mode
+tm-load-test -c 1 -T 10 -r 1000 -s 250 \
+    --broadcast-tx-method async \
+    --endpoints ws://tm-endpoint1.somewhere.com:26657/websocket,ws://tm-endpoint2.somewhere.com:26657/websocket \
+    --stats-output /path/to/save/stats.csv
+
+# From the master in master/slave mode
+tm-load-test \
+    master \
+    --expect-slaves 2 \
+    --bind localhost:26670 \
+    -c 1 -T 10 -r 1000 -s 250 \
+    --broadcast-tx-method async \
+    --endpoints ws://tm-endpoint1.somewhere.com:26657/websocket,ws://tm-endpoint2.somewhere.com:26657/websocket \
+    --stats-output /path/to/save/stats.csv
+```
+
+The output CSV file has the following format at present:
+
+```csv
+Parameter,Value,Units
+total_time,10.002,seconds
+total_txs,9000,count
+avg_tx_rate,899.818398,transactions per second
+```
+
 ## Development
 To run the linter and the tests:
 
