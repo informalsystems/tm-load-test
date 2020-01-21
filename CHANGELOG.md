@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.7.0
+* [\#39](https://github.com/interchainio/tm-load-test/issues/39) - Add basic
+  aggregate statistics output to CSV file.
+* Added integration test for standalone execution happy path.
+
 ## v0.6.2
 * [\#37](https://github.com/interchainio/tm-load-test/pull/37) - Fix average
   transaction throughput rate in reporting/metrics.
