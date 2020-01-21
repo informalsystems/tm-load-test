@@ -1,11 +1,15 @@
 package loadtest_test
 
 import (
+	"encoding/csv"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,6 +22,21 @@ import (
 
 const totalTxsPerSlave = 50
 
+type aggregateStats struct {
+	totalTime float64
+	totalTxs  int
+	avgTxRate float64
+}
+
+func (s *aggregateStats) String() string {
+	return fmt.Sprintf(
+		"aggregateStats{totalTime: %.3f, totalTxs: %d, avgTxRate: %.3f}",
+		s.totalTime,
+		s.totalTxs,
+		s.avgTxRate,
+	)
+}
+
 func TestMasterSlaveHappyPath(t *testing.T) {
 	app := kvstore.NewKVStoreApplication()
 	node := rpctest.StartTendermint(app, rpctest.SuppressStdout, rpctest.RecreateConfig)
@@ -28,7 +47,14 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := testConfig()
+	tempDir, err := ioutil.TempDir("", "tmloadtest-masterslavehappypath")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	expectedTotalTxs := totalTxsPerSlave * 2
+	cfg := testConfig(tempDir)
 	masterCfg := loadtest.MasterConfig{
 		BindAddr:            fmt.Sprintf("localhost:%d", freePort),
 		ExpectSlaves:        2,
@@ -116,8 +142,8 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if txCount != (totalTxsPerSlave * 2) {
-						t.Fatalf("Expected %d transactions to have been recorded by the master, but got %d", totalTxsPerSlave, txCount)
+					if txCount != expectedTotalTxs {
+						t.Fatalf("Expected %d transactions to have been recorded by the master, but got %d", expectedTotalTxs, txCount)
 					}
 				}
 			}
@@ -126,6 +152,24 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 
 	if !metricsTested {
 		t.Fatal("Expected to have tested Prometheus metrics, but did not")
+	}
+
+	// ensure the aggregate stats were generated and computed correctly
+	stats, err := parseStats(cfg.StatsOutputFile)
+	if err != nil {
+		t.Fatal("Failed to parse output stats", err)
+	}
+	t.Logf("Got aggregate statistics from CSV: %v", stats)
+	if stats.totalTxs != (totalTxsPerSlave * 2) {
+		t.Fatalf("Expected %d transactions to have been recorded in aggregate stats, but got %d", expectedTotalTxs, stats.totalTxs)
+	}
+	if !floatsEqualWithTolerance(stats.avgTxRate, float64(stats.totalTxs)/stats.totalTime, 0.1) {
+		t.Fatalf(
+			"Average transaction rate (%.3f) does not compute from total time (%.3f) and total transactions (%d)",
+			stats.avgTxRate,
+			stats.totalTime,
+			stats.totalTxs,
+		)
 	}
 }
 
@@ -137,7 +181,7 @@ func getRPCAddress() string {
 	return fmt.Sprintf("ws://localhost:%s/websocket", listenURL.Port())
 }
 
-func testConfig() loadtest.Config {
+func testConfig(tempDir string) loadtest.Config {
 	return loadtest.Config{
 		ClientFactory:        "kvstore",
 		Connections:          1,
@@ -149,6 +193,7 @@ func testConfig() loadtest.Config {
 		BroadcastTxMethod:    "async",
 		Endpoints:            []string{getRPCAddress()},
 		EndpointSelectMethod: loadtest.SelectSuppliedEndpoints,
+		StatsOutputFile:      path.Join(tempDir, "stats.csv"),
 	}
 }
 
@@ -164,4 +209,56 @@ func getFreePort() (int, error) {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+func parseStats(filename string) (*aggregateStats, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	reader := csv.NewReader(f)
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(records) < 3 {
+		return nil, fmt.Errorf("expected at least 3 records in aggregate stats CSV, but got %d", len(records))
+	}
+	stats := &aggregateStats{}
+	for _, record := range records {
+		if len(record) > 0 {
+			if len(record) < 3 {
+				return nil, fmt.Errorf("expected at least 3 columns for each non-empty row in aggregate stats CSV")
+			}
+			switch record[0] {
+			case "total_txs":
+				totalTxs, err := strconv.ParseInt(record[1], 10, 32)
+				if err != nil {
+					return nil, err
+				}
+				stats.totalTxs = int(totalTxs)
+
+			case "total_time":
+				stats.totalTime, err = strconv.ParseFloat(record[1], 64)
+				if err != nil {
+					return nil, err
+				}
+
+			case "avg_tx_rate":
+				stats.avgTxRate, err = strconv.ParseFloat(record[1], 64)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
+	return stats, nil
+}
+
+func floatsEqualWithTolerance(a, b, tolerance float64) bool {
+	return math.Abs(a-b) < tolerance
 }

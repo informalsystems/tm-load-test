@@ -43,6 +43,16 @@ func executeLoadTest(cfg Config) error {
 		logger.Error("Failed to execute load test", "err", err)
 		return err
 	}
+
+	// if we need to write the final statistics
+	if len(cfg.StatsOutputFile) > 0 {
+		logger.Info("Writing aggregate statistics", "outputFile", cfg.StatsOutputFile)
+		if err := tg.WriteAggregateStats(cfg.StatsOutputFile); err != nil {
+			logger.Error("Failed to write aggregate statistics", "err", err)
+			return err
+		}
+	}
+
 	logger.Info("Load test complete!")
 	return nil
 }

@@ -10,8 +10,9 @@ import (
 type TransactorGroup struct {
 	transactors []*Transactor
 
-	statsMtx sync.RWMutex
-	txCounts map[int]int // The counts of all of the total transactions per transactor.
+	statsMtx  sync.RWMutex
+	startTime time.Time
+	txCounts  map[int]int // The counts of all of the total transactions per transactor.
 
 	progressCallbackMtx      sync.RWMutex
 	progressCallbackInterval time.Duration
@@ -70,6 +71,7 @@ func (g *TransactorGroup) Start() {
 	for _, t := range g.transactors {
 		t.Start()
 	}
+	g.setStartTime(time.Now())
 }
 
 // Cancel signals to all transactors to stop their operations.
@@ -110,6 +112,12 @@ func (g *TransactorGroup) Wait() error {
 	return err
 }
 
+func (g *TransactorGroup) WriteAggregateStats(filename string) error {
+	totalTxs := g.totalTxs()
+	totalTimeSeconds := time.Since(g.getStartTime()).Seconds()
+	return writeAggregateStats(filename, totalTxs, totalTimeSeconds)
+}
+
 func (g *TransactorGroup) progressReporter() {
 	defer close(g.progressReporterStopped)
 
@@ -125,6 +133,18 @@ func (g *TransactorGroup) progressReporter() {
 			return
 		}
 	}
+}
+
+func (g *TransactorGroup) setStartTime(startTime time.Time) {
+	g.statsMtx.Lock()
+	g.startTime = startTime
+	g.statsMtx.Unlock()
+}
+
+func (g *TransactorGroup) getStartTime() time.Time {
+	g.statsMtx.RLock()
+	defer g.statsMtx.RUnlock()
+	return g.startTime
 }
 
 func (g *TransactorGroup) trackTransactorProgress(id int, txCount int) {
