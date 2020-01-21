@@ -160,7 +160,43 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 		t.Fatal("Failed to parse output stats", err)
 	}
 	t.Logf("Got aggregate statistics from CSV: %v", stats)
-	if stats.totalTxs != (totalTxsPerSlave * 2) {
+	if stats.totalTxs != expectedTotalTxs {
+		t.Fatalf("Expected %d transactions to have been recorded in aggregate stats, but got %d", expectedTotalTxs, stats.totalTxs)
+	}
+	if !floatsEqualWithTolerance(stats.avgTxRate, float64(stats.totalTxs)/stats.totalTime, 0.1) {
+		t.Fatalf(
+			"Average transaction rate (%.3f) does not compute from total time (%.3f) and total transactions (%d)",
+			stats.avgTxRate,
+			stats.totalTime,
+			stats.totalTxs,
+		)
+	}
+}
+
+func TestStandaloneHappyPath(t *testing.T) {
+	app := kvstore.NewKVStoreApplication()
+	node := rpctest.StartTendermint(app, rpctest.SuppressStdout, rpctest.RecreateConfig)
+	defer rpctest.StopTendermint(node)
+
+	tempDir, err := ioutil.TempDir("", "tmloadtest-standalonehappypath")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	expectedTotalTxs := totalTxsPerSlave
+	cfg := testConfig(tempDir)
+	if err := loadtest.ExecuteStandalone(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// ensure the aggregate stats were generated and computed correctly
+	stats, err := parseStats(cfg.StatsOutputFile)
+	if err != nil {
+		t.Fatal("Failed to parse output stats", err)
+	}
+	t.Logf("Got aggregate statistics from CSV: %v", stats)
+	if stats.totalTxs != expectedTotalTxs {
 		t.Fatalf("Expected %d transactions to have been recorded in aggregate stats, but got %d", expectedTotalTxs, stats.totalTxs)
 	}
 	if !floatsEqualWithTolerance(stats.avgTxRate, float64(stats.totalTxs)/stats.totalTime, 0.1) {
@@ -194,6 +230,7 @@ func testConfig(tempDir string) loadtest.Config {
 		Endpoints:            []string{getRPCAddress()},
 		EndpointSelectMethod: loadtest.SelectSuppliedEndpoints,
 		StatsOutputFile:      path.Join(tempDir, "stats.csv"),
+		NoTrapInterrupts:     true,
 	}
 }
 

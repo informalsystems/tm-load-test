@@ -255,8 +255,8 @@ func (s *Slave) executeLoadTest() error {
 	s.logger.Info("Initiating load test")
 	tg.Start()
 
-	s.setInterrupt("executeLoadTest", func() { tg.Cancel() })
-	defer s.removeInterrupt("executeLoadTest")
+	s.setInterrupt("ExecuteStandalone", func() { tg.Cancel() })
+	defer s.removeInterrupt("ExecuteStandalone")
 
 	if err := tg.Wait(); err != nil {
 		s.logger.Error("Failed to execute load test", "err", err)

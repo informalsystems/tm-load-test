@@ -44,7 +44,7 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 				os.Exit(1)
 			}
 
-			if err := executeLoadTest(cfg); err != nil {
+			if err := ExecuteStandalone(cfg); err != nil {
 				os.Exit(1)
 			}
 		},

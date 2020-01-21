@@ -35,6 +35,7 @@ type Config struct {
 	MinConnectivity      int      `json:"min_connectivity"`       // The minimum number of peers to which each peer must be connected before starting the load test. Set to 0 by default (no minimum).
 	PeerConnectTimeout   int      `json:"peer_connect_timeout"`   // The maximum time to wait (in seconds) for all peers to connect, if ExpectPeers > 0.
 	StatsOutputFile      string   `json:"stats_output_file"`      // Where to store the final aggregate statistics file (in CSV format).
+	NoTrapInterrupts     bool     `json:"no_trap_interrupts"`     // Should we avoid trapping Ctrl+Break? Only relevant for standalone execution mode.
 }
 
 // MasterConfig is the configuration options specific to a master node.

@@ -6,7 +6,8 @@ import (
 	"github.com/interchainio/tm-load-test/internal/logging"
 )
 
-func executeLoadTest(cfg Config) error {
+// ExecuteStandalone will run a standalone (non-master/slave) load test.
+func ExecuteStandalone(cfg Config) error {
 	logger := logging.NewLogrusLogger("loadtest")
 
 	// if we need to wait for the network to stabilize first
@@ -35,9 +36,14 @@ func executeLoadTest(cfg Config) error {
 	logger.Info("Initiating load test")
 	tg.Start()
 
-	// we want to know if the user hits Ctrl+Break
-	cancelTrap := trapInterrupts(func() { tg.Cancel() }, logger)
-	defer close(cancelTrap)
+	var cancelTrap chan struct{}
+	if !cfg.NoTrapInterrupts {
+		// we want to know if the user hits Ctrl+Break
+		cancelTrap = trapInterrupts(func() { tg.Cancel() }, logger)
+		defer close(cancelTrap)
+	} else {
+		logger.Debug("Skipping trapping of interrupts (e.g. Ctrl+Break)")
+	}
 
 	if err := tg.Wait(); err != nil {
 		logger.Error("Failed to execute load test", "err", err)
