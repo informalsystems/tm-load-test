@@ -45,8 +45,8 @@ func waitForTendermintNetworkPeers(
 	)
 
 	cancelc := make(chan struct{}, 1)
-	cancelTrap := trapInterrupts(func() { close(cancelc); }, logger);
-	defer close(cancelTrap);
+	cancelTrap := trapInterrupts(func() { close(cancelc) }, logger)
+	defer close(cancelTrap)
 	startTime := time.Now()
 	suppliedPeers := make(map[string]*tendermintPeerInfo)
 	for _, peerURL := range startingPeerAddrs {
