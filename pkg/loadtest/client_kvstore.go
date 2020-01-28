@@ -39,7 +39,7 @@ func NewKVStoreClientFactory() *KVStoreClientFactory {
 }
 
 func (f *KVStoreClientFactory) ValidateConfig(cfg Config) error {
-	// this will ensure that the key length is at least 20 bytes (4 bytes for
+	// this will ensure that the key length is at least 19 bytes (4 bytes for
 	// the client ID, and another 15 random bytes)
 	if cfg.Size < minKVStoreTxSize {
 		return fmt.Errorf("transaction size must be at least %d bytes", minKVStoreTxSize)
@@ -49,10 +49,12 @@ func (f *KVStoreClientFactory) ValidateConfig(cfg Config) error {
 
 func (f *KVStoreClientFactory) NewClient(cfg Config) (Client, error) {
 	// calculate how long each key/value pair must be to facilitate the
-	// configured transaction size (minimum 19 bytes)
+	// configured transaction size
 	keyLen := (cfg.Size / 2) - 1
 	// we need to cater for the "=" symbol in between (minimum 20 bytes)
 	valueLen := cfg.Size - keyLen - 1
+	// subtract 4 bytes to make space for the client ID prefix
+	// TODO: Should we consider any alternative ways of constructing a key prefix?
 	keyPrefix := make([]byte, 4)
 	binary.LittleEndian.PutUint32(keyPrefix, f.nextClientID())
 	keyLen -= 4
