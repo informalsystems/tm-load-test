@@ -66,7 +66,7 @@ func NewTransactor(remoteAddr string, config *Config) (*Transactor, error) {
 	if !exists {
 		return nil, fmt.Errorf("unrecognized client factory: %s", config.ClientFactory)
 	}
-	client, err := clientFactory.NewClient()
+	client, err := clientFactory.NewClient(*config)
 	if err != nil {
 		return nil, err
 	}
