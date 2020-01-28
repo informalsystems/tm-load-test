@@ -12,11 +12,12 @@ type TransactorGroup struct {
 
 	statsMtx  sync.RWMutex
 	startTime time.Time
-	txCounts  map[int]int // The counts of all of the total transactions per transactor.
+	txCounts  map[int]int   // The counts of all of the total transactions per transactor.
+	txBytes   map[int]int64 // The total number of transaction bytes sent per transactor.
 
 	progressCallbackMtx      sync.RWMutex
 	progressCallbackInterval time.Duration
-	progressCallback         func(g *TransactorGroup, txCount int)
+	progressCallback         func(g *TransactorGroup, txCount int, txBytes int64)
 
 	stopProgressReporter    chan struct{} // Close this to stop the progress reporter.
 	progressReporterStopped chan struct{} // Closed when the progress reporter goroutine has completely stopped.
@@ -26,6 +27,7 @@ func NewTransactorGroup() *TransactorGroup {
 	return &TransactorGroup{
 		transactors:              make([]*Transactor, 0),
 		txCounts:                 make(map[int]int),
+		txBytes:                  make(map[int]int64),
 		progressCallbackInterval: defaultProgressCallbackInterval,
 		stopProgressReporter:     make(chan struct{}, 1),
 		progressReporterStopped:  make(chan struct{}, 1),
@@ -58,7 +60,7 @@ func (g *TransactorGroup) AddAll(cfg *Config) error {
 	return nil
 }
 
-func (g *TransactorGroup) SetProgressCallback(interval time.Duration, callback func(*TransactorGroup, int)) {
+func (g *TransactorGroup) SetProgressCallback(interval time.Duration, callback func(*TransactorGroup, int, int64)) {
 	g.progressCallbackMtx.Lock()
 	g.progressCallbackInterval = interval
 	g.progressCallback = callback
@@ -98,7 +100,7 @@ func (g *TransactorGroup) Wait() error {
 			errc <- _t.Wait()
 			defer wg.Done()
 			// get the final tx count
-			g.trackTransactorProgress(_i, _t.GetTxCount())
+			g.trackTransactorProgress(_i, _t.GetTxCount(), _t.GetTxBytes())
 		}(i, t)
 	}
 	wg.Wait()
@@ -113,9 +115,12 @@ func (g *TransactorGroup) Wait() error {
 }
 
 func (g *TransactorGroup) WriteAggregateStats(filename string) error {
-	totalTxs := g.totalTxs()
-	totalTimeSeconds := time.Since(g.getStartTime()).Seconds()
-	return writeAggregateStats(filename, totalTxs, totalTimeSeconds)
+	stats := AggregateStats{
+		TotalTxs:         g.totalTxs(),
+		TotalTimeSeconds: time.Since(g.getStartTime()).Seconds(),
+		TotalBytes:       g.totalBytes(),
+	}
+	return writeAggregateStats(filename, stats)
 }
 
 func (g *TransactorGroup) progressReporter() {
@@ -147,9 +152,10 @@ func (g *TransactorGroup) getStartTime() time.Time {
 	return g.startTime
 }
 
-func (g *TransactorGroup) trackTransactorProgress(id int, txCount int) {
+func (g *TransactorGroup) trackTransactorProgress(id int, txCount int, txBytes int64) {
 	g.statsMtx.Lock()
 	g.txCounts[id] = txCount
+	g.txBytes[id] = txBytes
 	g.statsMtx.Unlock()
 }
 
@@ -161,10 +167,11 @@ func (g *TransactorGroup) getProgressCallbackInterval() time.Duration {
 
 func (g *TransactorGroup) reportProgress() {
 	totalTxs := g.totalTxs()
+	totalBytes := g.totalBytes()
 
 	g.progressCallbackMtx.RLock()
 	if g.progressCallback != nil {
-		g.progressCallback(g, totalTxs)
+		g.progressCallback(g, totalTxs, totalBytes)
 	}
 	g.progressCallbackMtx.RUnlock()
 }
@@ -175,6 +182,16 @@ func (g *TransactorGroup) totalTxs() int {
 	total := 0
 	for _, txCount := range g.txCounts {
 		total += txCount
+	}
+	return total
+}
+
+func (g *TransactorGroup) totalBytes() int64 {
+	g.statsMtx.RLock()
+	defer g.statsMtx.RUnlock()
+	total := int64(0)
+	for _, txBytes := range g.txBytes {
+		total += txBytes
 	}
 	return total
 }

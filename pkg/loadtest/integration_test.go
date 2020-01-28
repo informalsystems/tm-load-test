@@ -22,21 +22,6 @@ import (
 
 const totalTxsPerSlave = 50
 
-type aggregateStats struct {
-	totalTime float64
-	totalTxs  int
-	avgTxRate float64
-}
-
-func (s *aggregateStats) String() string {
-	return fmt.Sprintf(
-		"aggregateStats{totalTime: %.3f, totalTxs: %d, avgTxRate: %.3f}",
-		s.totalTime,
-		s.totalTxs,
-		s.avgTxRate,
-	)
-}
-
 func TestMasterSlaveHappyPath(t *testing.T) {
 	app := kvstore.NewKVStoreApplication()
 	node := rpctest.StartTendermint(app, rpctest.SuppressStdout, rpctest.RecreateConfig)
@@ -55,6 +40,7 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 
 	expectedTotalTxs := totalTxsPerSlave * 2
 	cfg := testConfig(tempDir)
+	expectedTotalBytes := int64(cfg.Size) * int64(expectedTotalTxs)
 	masterCfg := loadtest.MasterConfig{
 		BindAddr:            fmt.Sprintf("localhost:%d", freePort),
 		ExpectSlaves:        2,
@@ -92,6 +78,7 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 	slave1Stopped := false
 	slave2Stopped := false
 	metricsTested := false
+	pstats := prometheusStats{}
 
 	for i := 0; i < 3; i++ {
 		select {
@@ -118,40 +105,20 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 
 		// at this point the master should be waiting a little
 		if slave1Stopped && slave2Stopped && !metricsTested {
+			pstats = getPrometheusStats(t, freePort)
 			metricsTested = true
-			// grab the prometheus metrics from the master
-			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/metrics", freePort))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != 200 {
-				t.Fatalf("Expected status code 200 from Prometheus endpoint, but got %d", resp.StatusCode)
-			}
-			body, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				t.Fatal("Failed to read response body from Prometheus endpoint:", err)
-			}
-			for _, line := range strings.Split(string(body), "\n") {
-				if strings.HasPrefix(line, "tmloadtest_master_total_txs") {
-					parts := strings.Split(line, " ")
-					if len(parts) < 2 {
-						t.Fatal("Invalid Prometheus metrics format")
-					}
-					txCount, err := strconv.Atoi(parts[1])
-					if err != nil {
-						t.Fatal(err)
-					}
-					if txCount != expectedTotalTxs {
-						t.Fatalf("Expected %d transactions to have been recorded by the master, but got %d", expectedTotalTxs, txCount)
-					}
-				}
-			}
 		}
 	}
 
 	if !metricsTested {
 		t.Fatal("Expected to have tested Prometheus metrics, but did not")
+	}
+	// check the Prometheus stats
+	if expectedTotalTxs != pstats.txCount {
+		t.Fatalf("Expected %d total transactions from Prometheus statistics, but got %d", expectedTotalTxs, pstats.txCount)
+	}
+	if expectedTotalBytes != pstats.txBytes {
+		t.Fatalf("Expected %d total transactions from Prometheus statistics, but got %d", expectedTotalBytes, pstats.txBytes)
 	}
 
 	// ensure the aggregate stats were generated and computed correctly
@@ -160,15 +127,26 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 		t.Fatal("Failed to parse output stats", err)
 	}
 	t.Logf("Got aggregate statistics from CSV: %v", stats)
-	if stats.totalTxs != expectedTotalTxs {
-		t.Fatalf("Expected %d transactions to have been recorded in aggregate stats, but got %d", expectedTotalTxs, stats.totalTxs)
+	if stats.TotalTxs != expectedTotalTxs {
+		t.Fatalf("Expected %d transactions to have been recorded in aggregate stats, but got %d", expectedTotalTxs, stats.TotalTxs)
 	}
-	if !floatsEqualWithTolerance(stats.avgTxRate, float64(stats.totalTxs)/stats.totalTime, 0.1) {
+	if stats.TotalBytes != expectedTotalBytes {
+		t.Fatalf("Expected %d bytes to have been sent, but got %d", expectedTotalBytes, stats.TotalBytes)
+	}
+	if !floatsEqualWithTolerance(stats.AvgTxRate, float64(stats.TotalTxs)/stats.TotalTimeSeconds, float64(stats.TotalTxs)/1000.0) {
 		t.Fatalf(
 			"Average transaction rate (%.3f) does not compute from total time (%.3f) and total transactions (%d)",
-			stats.avgTxRate,
-			stats.totalTime,
-			stats.totalTxs,
+			stats.AvgTxRate,
+			stats.TotalTimeSeconds,
+			stats.TotalTxs,
+		)
+	}
+	if !floatsEqualWithTolerance(stats.AvgDataRate, float64(stats.TotalBytes)/stats.TotalTimeSeconds, float64(stats.TotalBytes)/1000.0) {
+		t.Fatalf(
+			"Average transaction data rate (%.3f) does not compute from total time (%.3f) and total bytes sent (%d)",
+			stats.AvgDataRate,
+			stats.TotalTimeSeconds,
+			stats.TotalBytes,
 		)
 	}
 }
@@ -186,6 +164,7 @@ func TestStandaloneHappyPath(t *testing.T) {
 
 	expectedTotalTxs := totalTxsPerSlave
 	cfg := testConfig(tempDir)
+	expectedTotalBytes := int64(cfg.Size) * int64(expectedTotalTxs)
 	if err := loadtest.ExecuteStandalone(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -196,15 +175,26 @@ func TestStandaloneHappyPath(t *testing.T) {
 		t.Fatal("Failed to parse output stats", err)
 	}
 	t.Logf("Got aggregate statistics from CSV: %v", stats)
-	if stats.totalTxs != expectedTotalTxs {
-		t.Fatalf("Expected %d transactions to have been recorded in aggregate stats, but got %d", expectedTotalTxs, stats.totalTxs)
+	if stats.TotalTxs != expectedTotalTxs {
+		t.Fatalf("Expected %d transactions to have been recorded in aggregate stats, but got %d", expectedTotalTxs, stats.TotalTxs)
 	}
-	if !floatsEqualWithTolerance(stats.avgTxRate, float64(stats.totalTxs)/stats.totalTime, 0.1) {
+	if stats.TotalBytes != expectedTotalBytes {
+		t.Fatalf("Expected %d bytes to have been sent, but got %d", expectedTotalBytes, stats.TotalBytes)
+	}
+	if !floatsEqualWithTolerance(stats.AvgTxRate, float64(stats.TotalTxs)/stats.TotalTimeSeconds, float64(stats.TotalTxs)/1000.0) {
 		t.Fatalf(
 			"Average transaction rate (%.3f) does not compute from total time (%.3f) and total transactions (%d)",
-			stats.avgTxRate,
-			stats.totalTime,
-			stats.totalTxs,
+			stats.AvgTxRate,
+			stats.TotalTimeSeconds,
+			stats.TotalTxs,
+		)
+	}
+	if !floatsEqualWithTolerance(stats.AvgDataRate, float64(stats.TotalBytes)/stats.TotalTimeSeconds, float64(stats.TotalBytes)/1000.0) {
+		t.Fatalf(
+			"Average transaction data rate (%.3f) does not compute from total time (%.3f) and total bytes sent (%d)",
+			stats.AvgDataRate,
+			stats.TotalTimeSeconds,
+			stats.TotalBytes,
 		)
 	}
 }
@@ -248,7 +238,7 @@ func getFreePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-func parseStats(filename string) (*aggregateStats, error) {
+func parseStats(filename string) (*loadtest.AggregateStats, error) {
 	f, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -264,7 +254,7 @@ func parseStats(filename string) (*aggregateStats, error) {
 	if len(records) < 3 {
 		return nil, fmt.Errorf("expected at least 3 records in aggregate stats CSV, but got %d", len(records))
 	}
-	stats := &aggregateStats{}
+	stats := &loadtest.AggregateStats{}
 	for _, record := range records {
 		if len(record) > 0 {
 			if len(record) < 3 {
@@ -276,16 +266,28 @@ func parseStats(filename string) (*aggregateStats, error) {
 				if err != nil {
 					return nil, err
 				}
-				stats.totalTxs = int(totalTxs)
+				stats.TotalTxs = int(totalTxs)
 
 			case "total_time":
-				stats.totalTime, err = strconv.ParseFloat(record[1], 64)
+				stats.TotalTimeSeconds, err = strconv.ParseFloat(record[1], 64)
+				if err != nil {
+					return nil, err
+				}
+
+			case "total_bytes":
+				stats.TotalBytes, err = strconv.ParseInt(record[1], 10, 64)
 				if err != nil {
 					return nil, err
 				}
 
 			case "avg_tx_rate":
-				stats.avgTxRate, err = strconv.ParseFloat(record[1], 64)
+				stats.AvgTxRate, err = strconv.ParseFloat(record[1], 64)
+				if err != nil {
+					return nil, err
+				}
+
+			case "avg_data_rate":
+				stats.AvgDataRate, err = strconv.ParseFloat(record[1], 64)
 				if err != nil {
 					return nil, err
 				}
@@ -298,4 +300,49 @@ func parseStats(filename string) (*aggregateStats, error) {
 
 func floatsEqualWithTolerance(a, b, tolerance float64) bool {
 	return math.Abs(a-b) < tolerance
+}
+
+type prometheusStats struct {
+	txCount int
+	txBytes int64
+}
+
+func getPrometheusStats(t *testing.T, port int) prometheusStats {
+	// grab the prometheus metrics from the master
+	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/metrics", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("Expected status code 200 from Prometheus endpoint, but got %d", resp.StatusCode)
+	}
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal("Failed to read response body from Prometheus endpoint:", err)
+	}
+	stats := prometheusStats{}
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.HasPrefix(line, "tmloadtest_master_total_txs") {
+			parts := strings.Split(line, " ")
+			if len(parts) < 2 {
+				t.Fatal("Invalid Prometheus metrics format")
+			}
+			stats.txCount, err = strconv.Atoi(parts[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+
+		} else if strings.HasPrefix(line, "tmloadtest_master_total_bytes") {
+			parts := strings.Split(line, " ")
+			if len(parts) < 2 {
+				t.Fatal("Invalid Prometheus metrics format")
+			}
+			stats.txBytes, err = strconv.ParseInt(parts[1], 10, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return stats
 }

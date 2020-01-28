@@ -40,12 +40,13 @@ type Transactor struct {
 	statsMtx  sync.RWMutex
 	startTime time.Time // When did the transaction sending start?
 	txCount   int       // How many transactions have been sent.
+	txBytes   int64     // How many transaction bytes have been sent, cumulatively.
 	txRate    float64   // The number of transactions sent, per second.
 
 	progressCallbackMtx      sync.RWMutex
-	progressCallbackID       int                       // A unique identifier for this transactor when calling the progress callback.
-	progressCallbackInterval time.Duration             // How frequently to call the progress update callback.
-	progressCallback         func(id int, txCount int) // Called with the total number of transactions executed so far.
+	progressCallbackID       int                                      // A unique identifier for this transactor when calling the progress callback.
+	progressCallbackInterval time.Duration                            // How frequently to call the progress update callback.
+	progressCallback         func(id int, txCount int, txBytes int64) // Called with the total number of transactions executed so far.
 
 	stopMtx sync.RWMutex
 	stop    bool
@@ -90,7 +91,7 @@ func NewTransactor(remoteAddr string, config *Config) (*Transactor, error) {
 	}, nil
 }
 
-func (t *Transactor) SetProgressCallback(id int, interval time.Duration, callback func(int, int)) {
+func (t *Transactor) SetProgressCallback(id int, interval time.Duration, callback func(int, int, int64)) {
 	t.progressCallbackMtx.Lock()
 	t.progressCallbackID = id
 	t.progressCallbackInterval = interval
@@ -127,6 +128,14 @@ func (t *Transactor) GetTxCount() int {
 	t.statsMtx.RLock()
 	defer t.statsMtx.RUnlock()
 	return t.txCount
+}
+
+// GetTxBytes returns the cumulative total number of bytes (as transactions)
+// sent thus far by this transactor.
+func (t *Transactor) GetTxBytes() int64 {
+	t.statsMtx.RLock()
+	defer t.statsMtx.RUnlock()
+	return t.txBytes
 }
 
 // GetTxRate returns the average number of transactions per second sent by
@@ -251,7 +260,8 @@ func (t *Transactor) sendTransactions() error {
 		t.trackStartTime()
 	}
 	var sent int
-	defer func() { t.trackSentTxs(sent) }()
+	var sentBytes int64
+	defer func() { t.trackSentTxs(sent, sentBytes) }()
 	t.logger.Info("Sending batch of transactions", "toSend", toSend)
 	batchStartTime := time.Now()
 	for ; sent < toSend; sent++ {
@@ -262,6 +272,7 @@ func (t *Transactor) sendTransactions() error {
 		if err := t.writeTx(tx); err != nil {
 			return err
 		}
+		sentBytes += int64(len(tx))
 		// if we have to make way for the next batch
 		if time.Since(batchStartTime) >= time.Duration(t.config.SendPeriod)*time.Second {
 			break
@@ -277,11 +288,12 @@ func (t *Transactor) trackStartTime() {
 	t.statsMtx.Unlock()
 }
 
-func (t *Transactor) trackSentTxs(count int) {
+func (t *Transactor) trackSentTxs(count int, byteCount int64) {
 	t.statsMtx.Lock()
 	defer t.statsMtx.Unlock()
 
 	t.txCount += count
+	t.txBytes += byteCount
 	elapsed := time.Since(t.startTime).Seconds()
 	if elapsed > 0 {
 		t.txRate = float64(t.txCount) / elapsed
@@ -298,12 +310,13 @@ func (t *Transactor) sendPing() error {
 func (t *Transactor) reportProgress() {
 	txCount := t.GetTxCount()
 	txRate := t.GetTxRate()
+	txBytes := t.GetTxBytes()
 	t.logger.Debug("Statistics", "txCount", txCount, "txRate", fmt.Sprintf("%.3f txs/sec", txRate))
 
 	t.progressCallbackMtx.RLock()
 	defer t.progressCallbackMtx.RUnlock()
 	if t.progressCallback != nil {
-		t.progressCallback(t.progressCallbackID, txCount)
+		t.progressCallback(t.progressCallbackID, txCount, txBytes)
 	}
 }
 

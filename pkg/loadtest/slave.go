@@ -264,7 +264,7 @@ func (s *Slave) executeLoadTest() error {
 	}
 
 	// send the completion notification to the master
-	if err := s.reportFinalResults(tg.totalTxs()); err != nil {
+	if err := s.reportFinalResults(tg.totalTxs(), tg.totalBytes()); err != nil {
 		s.logger.Error("Failed to report final results for load test", "err", err)
 		return err
 	}
@@ -273,17 +273,27 @@ func (s *Slave) executeLoadTest() error {
 	return nil
 }
 
-func (s *Slave) reportProgress(tg *TransactorGroup, totalTxs int) {
+func (s *Slave) reportProgress(tg *TransactorGroup, totalTxs int, totalTxBytes int64) {
 	s.logger.Debug("Reporting progress back to master", "totalTxs", totalTxs)
-	if err := s.sock.WriteSlaveMsg(slaveMsg{ID: s.ID(), State: slaveTesting, TxCount: totalTxs}); err != nil {
+	if err := s.sock.WriteSlaveMsg(slaveMsg{
+		ID:           s.ID(),
+		State:        slaveTesting,
+		TxCount:      totalTxs,
+		TotalTxBytes: totalTxBytes,
+	}); err != nil {
 		s.logger.Error("Failed to report progress to master", "err", err)
 		tg.Cancel()
 	}
 }
 
-func (s *Slave) reportFinalResults(totalTxs int) error {
+func (s *Slave) reportFinalResults(totalTxs int, totalTxBytes int64) error {
 	s.logger.Debug("Reporting final results back to master", "totalTxs", totalTxs)
-	return s.sock.WriteSlaveMsg(slaveMsg{ID: s.ID(), State: slaveCompleted, TxCount: totalTxs})
+	return s.sock.WriteSlaveMsg(slaveMsg{
+		ID:           s.ID(),
+		State:        slaveCompleted,
+		TxCount:      totalTxs,
+		TotalTxBytes: totalTxBytes,
+	})
 }
 
 func (s *Slave) fail(reason string) {
