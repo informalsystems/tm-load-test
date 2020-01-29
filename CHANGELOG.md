@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.8.1
+## v0.9.0
 * [\#47](https://github.com/interchainio/tm-load-test/pull/47) - Makes sure
   that the KVStore client's `GenerateTx` method honours the preconfigured
   transaction size. **NB: This involves a breaking API change!** Please see
