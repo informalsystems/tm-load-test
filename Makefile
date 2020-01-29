@@ -27,6 +27,9 @@ build-tm-outage-sim-server-linux:
 test:
 	go test -cover -race ./...
 
+bench:
+	go test -bench="Benchmark" -run="notests" ./...
+
 $(GOPATH)/bin/golangci-lint:
 	go get -u github.com/golangci/golangci-lint/cmd/golangci-lint
 

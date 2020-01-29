@@ -64,8 +64,13 @@ func (c Config) Validate() error {
 	if len(c.ClientFactory) == 0 {
 		return fmt.Errorf("client factory name must be specified")
 	}
-	if _, exists := clientFactories[c.ClientFactory]; !exists {
+	factory, factoryExists := clientFactories[c.ClientFactory]
+	if !factoryExists {
 		return fmt.Errorf("client factory \"%s\" does not exist", c.ClientFactory)
+	}
+	// client factory-specific configuration validation
+	if err := factory.ValidateConfig(c); err != nil {
+		return fmt.Errorf("invalid configuration for client factory \"%s\": %v", c.ClientFactory, err)
 	}
 	if c.Connections < 1 {
 		return fmt.Errorf("expected connections to be >= 1, but was %d", c.Connections)
@@ -78,9 +83,6 @@ func (c Config) Validate() error {
 	}
 	if c.Rate < 1 {
 		return fmt.Errorf("expected transaction rate to be >= 1, but was %d", c.Rate)
-	}
-	if c.Size < 40 {
-		return fmt.Errorf("expected transaction size to be >= 40 bytes, but was %d", c.Size)
 	}
 	if c.Count < 1 && c.Count != -1 {
 		return fmt.Errorf("expected max transaction count to either be -1 or >= 1, but was %d", c.Count)
@@ -107,6 +109,15 @@ func (c Config) Validate() error {
 		return fmt.Errorf("invalid value for min-peer-connectivity: %d", c.MinConnectivity)
 	}
 	return nil
+}
+
+// MaxTxsPerEndpoint estimates the maximum number of transactions that this
+// configuration would generate for a single endpoint.
+func (c Config) MaxTxsPerEndpoint() uint64 {
+	if c.Count > -1 {
+		return uint64(c.Count)
+	}
+	return uint64(c.Rate) * uint64(c.Time)
 }
 
 func (c MasterConfig) ToJSON() string {

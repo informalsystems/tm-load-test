@@ -51,13 +51,17 @@ type Master struct {
 	// Rudimentary statistics
 	startTime          time.Time
 	lastProgressUpdate time.Time
-	totalTxs           int            // The last calculated total number of transactions across all slaves.
-	totalTxsPerSlave   map[string]int // The number of transactions sent by each slave.
+	totalTxs           int              // The last calculated total number of transactions across all slaves.
+	totalBytes         int64            // The last calculated total number of bytes in transactions sent across all slaves.
+	totalTxsPerSlave   map[string]int   // The number of transactions sent by each slave.
+	totalBytesPerSlave map[string]int64 // The total cumulative number of transaction bytes sent by each slave.
 
 	// Prometheus metrics
 	stateMetric           prometheus.Gauge // A code-based status metric for representing the master's current state.
 	totalTxsMetric        prometheus.Gauge // The total number of transactions sent by all slaves.
+	totalBytesMetric      prometheus.Gauge // The total cumulative bytes in transactions sent by all slaves.
 	txRateMetric          prometheus.Gauge // The transaction throughput rate (tx/sec) as measured by the master since the last metrics update.
+	txDataRateMetric      prometheus.Gauge // The total transaction throughput rate in bytes/sec as measured by the master.
 	overallTxRateMetric   prometheus.Gauge // The overall transaction throughput rate (tx/sec) as measured by the master since the beginning of the load test.
 	slavesCompletedMetric prometheus.Gauge // The total number of slaves that have completed their testing.
 	testUnderwayMetric    prometheus.Gauge // The ID of the load test currently underway (-1 if none).
@@ -84,16 +88,17 @@ var upgrader = websocket.Upgrader{
 func NewMaster(cfg *Config, masterCfg *MasterConfig) *Master {
 	logger := logging.NewLogrusLogger("master")
 	master := &Master{
-		cfg:              cfg,
-		masterCfg:        masterCfg,
-		logger:           logger,
-		svrStopped:       make(chan struct{}, 1),
-		slaves:           make(map[string]*remoteSlave),
-		slaveRegister:    make(chan remoteSlaveRegisterRequest, masterCfg.ExpectSlaves),
-		slaveUnregister:  make(chan remoteSlaveUnregisterRequest, masterCfg.ExpectSlaves),
-		slaveUpdate:      make(chan slaveMsg, masterCfg.ExpectSlaves),
-		stop:             make(chan struct{}, 1),
-		totalTxsPerSlave: make(map[string]int),
+		cfg:                cfg,
+		masterCfg:          masterCfg,
+		logger:             logger,
+		svrStopped:         make(chan struct{}, 1),
+		slaves:             make(map[string]*remoteSlave),
+		slaveRegister:      make(chan remoteSlaveRegisterRequest, masterCfg.ExpectSlaves),
+		slaveUnregister:    make(chan remoteSlaveUnregisterRequest, masterCfg.ExpectSlaves),
+		slaveUpdate:        make(chan slaveMsg, masterCfg.ExpectSlaves),
+		stop:               make(chan struct{}, 1),
+		totalTxsPerSlave:   make(map[string]int),
+		totalBytesPerSlave: make(map[string]int64),
 		stateMetric: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "tmloadtest_master_state",
 			Help: "The current state of the tm-load-test master",
@@ -102,9 +107,17 @@ func NewMaster(cfg *Config, masterCfg *MasterConfig) *Master {
 			Name: "tmloadtest_master_total_txs",
 			Help: "The total cumulative number of transactions sent by all slaves",
 		}),
+		totalBytesMetric: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "tmloadtest_master_total_bytes",
+			Help: "The total cumulative number of bytes of transactions sent by all slaves",
+		}),
 		txRateMetric: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "tmloadtest_master_tx_rate",
-			Help: "The current transaction throughput rate as seen by the tm-load-test master, summed across all slaves",
+			Help: "The current transaction throughput rate (in txs/sec) as seen by the tm-load-test master, summed across all slaves",
+		}),
+		txDataRateMetric: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "tmloadtest_master_tx_data_rate",
+			Help: "The current transaction throughput rate (in bytes/sec) as seen by the tm-load-test master, summed across all slaves",
 		}),
 		overallTxRateMetric: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "tmloadtest_master_overall_tx_rate",
@@ -261,6 +274,10 @@ func (m *Master) receiveTestingUpdates() error {
 			if msg.TxCount > 0 {
 				m.totalTxsPerSlave[msg.ID] = msg.TxCount
 			}
+			// keep track of how many bytes this slave reported
+			if msg.TotalTxBytes > 0 {
+				m.totalBytesPerSlave[msg.ID] = msg.TotalTxBytes
+			}
 
 			switch msg.State {
 			case slaveTesting:
@@ -328,6 +345,7 @@ func (m *Master) registerRemoteSlave(rs *remoteSlave) error {
 	}
 	m.slaves[id] = rs
 	m.totalTxsPerSlave[id] = 0
+	m.totalBytesPerSlave[id] = 0
 	m.logger.Info("Added remote slave", "id", id)
 	return nil
 }
@@ -350,17 +368,23 @@ func (m *Master) logTestingProgress(completed int) {
 	for _, txCount := range m.totalTxsPerSlave {
 		totalTxs += txCount
 	}
+	totalBytes := int64(0)
+	for _, txBytes := range m.totalBytesPerSlave {
+		totalBytes += txBytes
+	}
 	overallElapsed := time.Since(m.startTime).Seconds()
 	elapsed := time.Since(m.lastProgressUpdate).Seconds()
 
 	overallAvgRate := float64(0)
 	avgRate := float64(0)
+	avgDataRate := float64(0)
 
 	if overallElapsed > 0 {
 		overallAvgRate = float64(totalTxs) / overallElapsed
 	}
 	if elapsed > 0 {
 		avgRate = float64(totalTxs-m.totalTxs) / elapsed
+		avgDataRate = float64(totalBytes-m.totalBytes) / elapsed
 	}
 
 	m.logger.Info(
@@ -368,18 +392,27 @@ func (m *Master) logTestingProgress(completed int) {
 		"totalTxs", totalTxs,
 		"overallAvgRate", fmt.Sprintf("%.2f txs/sec", overallAvgRate),
 		"avgRate", fmt.Sprintf("%.2f txs/sec", avgRate),
+		"totalBytes", totalBytes,
 	)
 
 	m.lastProgressUpdate = time.Now()
 	m.totalTxs = totalTxs
+	m.totalBytes = totalBytes
 	m.totalTxsMetric.Set(float64(totalTxs))
+	m.totalBytesMetric.Set(float64(totalBytes))
 	m.txRateMetric.Set(avgRate)
+	m.txDataRateMetric.Set(avgDataRate)
 	m.overallTxRateMetric.Set(overallAvgRate)
 	m.slavesCompletedMetric.Set(float64(completed))
 
 	// if we're done and we need to write aggregate statistics
 	if completed >= m.masterCfg.ExpectSlaves && len(m.cfg.StatsOutputFile) > 0 {
-		if err := writeAggregateStats(m.cfg.StatsOutputFile, totalTxs, overallElapsed); err != nil {
+		stats := AggregateStats{
+			TotalTxs:         totalTxs,
+			TotalTimeSeconds: overallElapsed,
+			TotalBytes:       totalBytes,
+		}
+		if err := writeAggregateStats(m.cfg.StatsOutputFile, stats); err != nil {
 			m.logger.Error("Failed to write aggregate statistics", "err", err)
 		}
 	}

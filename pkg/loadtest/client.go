@@ -4,9 +4,13 @@ import "fmt"
 
 // ClientFactory produces load testing clients.
 type ClientFactory interface {
+	// ValidateConfig must check whether the given configuration is valid for
+	// our specific client factory.
+	ValidateConfig(cfg Config) error
+
 	// NewClient must instantiate a new load testing client, or produce an error
 	// if that process fails.
-	NewClient() (Client, error)
+	NewClient(cfg Config) (Client, error)
 }
 
 // Client generates transactions to be sent to a specific endpoint.

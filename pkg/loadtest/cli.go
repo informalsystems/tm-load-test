@@ -12,7 +12,7 @@ import (
 )
 
 // CLIVersion must be manually updated as new versions are released.
-const CLIVersion = "v0.8.0"
+const CLIVersion = "v0.9.0"
 
 // cliVersionCommitID must be set through linker settings. See
 // https://stackoverflow.com/a/11355611/1156132 for details.

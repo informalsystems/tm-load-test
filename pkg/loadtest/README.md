@@ -48,7 +48,13 @@ type MyABCIAppClient struct {}
 // MyABCIAppClient implements loadtest.Client
 var _ loadtest.Client = (*MyABCIAppClient)(nil)
 
-func (f *MyABCIAppClientFactory) NewClient() (loadtest.Client, error) {
+func (f *MyABCIAppClientFactory) ValidateConfig(cfg loadtest.Config) error {
+    // Do any checks here that you need to ensure that the load test 
+    // configuration is compatible with your client.
+    return nil
+}
+
+func (f *MyABCIAppClientFactory) NewClient(cfg loadtest.Config) (loadtest.Client, error) {
     return &MyABCIAppClient{}, nil
 }
 

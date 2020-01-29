@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.0
+* [\#47](https://github.com/interchainio/tm-load-test/pull/47) - Makes sure
+  that the KVStore client's `GenerateTx` method honours the preconfigured
+  transaction size. **NB: This involves a breaking API change!** Please see
+  [the client API documentation](./pkg/loadtest/README.md) for more details.
+
 ## v0.8.0
 * [\#42](https://github.com/interchainio/tm-load-test/pull/42) - Add Prometheus
   gauge for when load test is underway. This indicator exposes a customizable
