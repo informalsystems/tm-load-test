@@ -111,6 +111,15 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// MaxTxsPerEndpoint estimates the maximum number of transactions that this
+// configuration would generate for a single endpoint.
+func (c Config) MaxTxsPerEndpoint() uint64 {
+	if c.Count > -1 {
+		return uint64(c.Count)
+	}
+	return uint64(c.Rate) * uint64(c.Time)
+}
+
 func (c MasterConfig) ToJSON() string {
 	b, err := json.Marshal(c)
 	if err != nil {
