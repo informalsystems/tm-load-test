@@ -1,28 +1,55 @@
 package loadtest
 
 import (
-	"encoding/binary"
 	"fmt"
-	"sync"
 
 	"github.com/tendermint/tendermint/libs/common"
 )
 
-const minKVStoreTxSize int = 40
+// The Tendermint common.RandStr method can effectively generate human-readable
+// (alphanumeric) strings from a set of 62 characters. We aim here with the
+// KVStore client to generate unique client IDs as well as totally unique keys
+// for all transactions. Values are not so important.
+const KVStoreClientIDLen int = 5 // Allows for 6,471,002 random client IDs (62C5)
+const kvstoreMinValueLen int = 1 // We at least need 1 character in a key/value pair's value.
+
+// This is a map of nCr where n=62 and r varies from 0 through 15. It gives the
+// maximum number of unique transaction IDs that can be accommodated with a
+// given key suffix length.
+var kvstoreMaxTxsByKeySuffixLen = []uint64{
+	0,              // 0
+	62,             // 1
+	1891,           // 2
+	37820,          // 3
+	557845,         // 4
+	6471002,        // 5
+	61474519,       // 6
+	491796152,      // 7
+	3381098545,     // 8
+	20286591270,    // 9
+	107518933731,   // 10
+	508271323092,   // 11
+	2160153123141,  // 12
+	8308281242850,  // 13
+	29078984349975, // 14
+	93052749919920, // 15
+}
 
 // KVStoreClientFactory creates load testing clients to interact with the
 // built-in Tendermint kvstore ABCI application.
-type KVStoreClientFactory struct {
-	mtx         sync.Mutex
-	clientCount uint32
-}
+type KVStoreClientFactory struct{}
 
 // KVStoreClient generates arbitrary transactions (random key=value pairs) to
-// be sent to the kvstore ABCI application.
+// be sent to the kvstore ABCI application. The keys are structured as follows:
+//
+// `[client_id][tx_id]=[tx_id]`
+//
+// where each value (`client_id` and `tx_id`) is padded with 0s to meet the
+// transaction size requirement.
 type KVStoreClient struct {
-	keyPrefix []byte
-	keyLen    int
-	valueLen  int
+	keyPrefix    []byte // Contains the client ID
+	keySuffixLen int
+	valueLen     int
 }
 
 var _ ClientFactory = (*KVStoreClientFactory)(nil)
@@ -39,41 +66,53 @@ func NewKVStoreClientFactory() *KVStoreClientFactory {
 }
 
 func (f *KVStoreClientFactory) ValidateConfig(cfg Config) error {
-	// this will ensure that the key length is at least 19 bytes (4 bytes for
-	// the client ID, and another 15 random bytes)
-	if cfg.Size < minKVStoreTxSize {
-		return fmt.Errorf("transaction size must be at least %d bytes", minKVStoreTxSize)
+	maxTxsPerEndpoint := cfg.MaxTxsPerEndpoint()
+	if maxTxsPerEndpoint < 1 {
+		return fmt.Errorf("cannot calculate an appropriate maximum number of transactions per endpoint (got %d)", maxTxsPerEndpoint)
+	}
+	minKeySuffixLen, err := requiredKVStoreSuffixLen(maxTxsPerEndpoint)
+	if err != nil {
+		return err
+	}
+	// "[client_id][random_suffix]=[value]"
+	minTxSize := KVStoreClientIDLen + minKeySuffixLen + 1 + kvstoreMinValueLen
+	if cfg.Size < minTxSize {
+		return fmt.Errorf("transaction size %d is too small for given parameters (should be at least %d bytes)", cfg.Size, minTxSize)
 	}
 	return nil
 }
 
 func (f *KVStoreClientFactory) NewClient(cfg Config) (Client, error) {
-	// calculate how long each key/value pair must be to facilitate the
-	// configured transaction size
-	keyLen := (cfg.Size / 2) - 1
-	// we need to cater for the "=" symbol in between (minimum 20 bytes)
+	keyPrefix := []byte(common.RandStr(KVStoreClientIDLen))
+	keySuffixLen, err := requiredKVStoreSuffixLen(cfg.MaxTxsPerEndpoint())
+	if err != nil {
+		return nil, err
+	}
+	keyLen := len(keyPrefix) + keySuffixLen
+	// value length = key length - 1 (to cater for "=" symbol)
 	valueLen := cfg.Size - keyLen - 1
-	// subtract 4 bytes to make space for the client ID prefix
-	// TODO: Should we consider any alternative ways of constructing a key prefix?
-	keyPrefix := make([]byte, 4)
-	binary.LittleEndian.PutUint32(keyPrefix, f.nextClientID())
-	keyLen -= 4
 	return &KVStoreClient{
-		keyPrefix: keyPrefix,
-		keyLen:    keyLen,
-		valueLen:  valueLen,
+		keyPrefix:    keyPrefix,
+		keySuffixLen: keySuffixLen,
+		valueLen:     valueLen,
 	}, nil
 }
 
-func (f *KVStoreClientFactory) nextClientID() uint32 {
-	f.mtx.Lock()
-	defer f.mtx.Unlock()
-	f.clientCount += 1
-	return f.clientCount - 1
+func requiredKVStoreSuffixLen(maxTxCount uint64) (int, error) {
+	for l, maxTxs := range kvstoreMaxTxsByKeySuffixLen {
+		if maxTxCount < maxTxs {
+			if l+1 > len(kvstoreMaxTxsByKeySuffixLen) {
+				return -1, fmt.Errorf("cannot cater for maximum tx count of %d (too many unique transactions, suffix length %d)", maxTxCount, l+1)
+			}
+			// we use l+1 to minimize collision probability
+			return l + 1, nil
+		}
+	}
+	return -1, fmt.Errorf("cannot cater for maximum tx count of %d (too many unique transactions)", maxTxCount)
 }
 
 func (c *KVStoreClient) GenerateTx() ([]byte, error) {
-	k := append(c.keyPrefix, []byte(common.RandStr(c.keyLen))...)
+	k := append(c.keyPrefix, []byte(common.RandStr(c.keySuffixLen))...)
 	v := []byte(common.RandStr(c.valueLen))
 	return append(k, append([]byte("="), v...)...), nil
 }
