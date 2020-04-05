@@ -3,7 +3,7 @@ package loadtest
 import (
 	"fmt"
 
-	"github.com/tendermint/tendermint/libs/common"
+	"github.com/tendermint/iavl/common"
 )
 
 // The Tendermint common.RandStr method can effectively generate human-readable

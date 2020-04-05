@@ -23,7 +23,7 @@ import (
 const totalTxsPerSlave = 50
 
 func TestMasterSlaveHappyPath(t *testing.T) {
-	app := kvstore.NewKVStoreApplication()
+	app := kvstore.NewApplication()
 	node := rpctest.StartTendermint(app, rpctest.SuppressStdout, rpctest.RecreateConfig)
 	defer rpctest.StopTendermint(node)
 
@@ -152,7 +152,7 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 }
 
 func TestStandaloneHappyPath(t *testing.T) {
-	app := kvstore.NewKVStoreApplication()
+	app := kvstore.NewApplication()
 	node := rpctest.StartTendermint(app, rpctest.SuppressStdout, rpctest.RecreateConfig)
 	defer rpctest.StopTendermint(node)
 

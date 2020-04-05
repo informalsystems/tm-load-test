@@ -64,9 +64,13 @@ func waitForTendermintNetworkPeers(
 		}
 
 		peerAddr := fmt.Sprintf("http://%s:26657", peerIP)
+		client, err := client.NewHTTP(peerAddr, "/websocket")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Tendermint client: %s", err)
+		}
 		suppliedPeers[peerAddr] = &tendermintPeerInfo{
 			Addr:      peerAddr,
-			Client:    client.NewHTTP(peerAddr, "/websocket"),
+			Client:    client,
 			PeerAddrs: make([]string, 0),
 		}
 	}
@@ -110,8 +114,8 @@ func waitForTendermintNetworkPeers(
 // peers across the entire network.
 func getTendermintNetworkPeers(
 	peers map[string]*tendermintPeerInfo, // Any existing peers we know about already
-	timeout time.Duration,                // Maximum timeout for the entire operation
-	cancelc chan struct{},                // Allows us to cancel the polling operations
+	timeout time.Duration, // Maximum timeout for the entire operation
+	cancelc chan struct{}, // Allows us to cancel the polling operations
 	logger logging.Logger,
 ) (map[string]*tendermintPeerInfo, error) {
 	startTime := time.Now()
@@ -162,30 +166,37 @@ func getTendermintNetworkPeers(
 			return nil, fmt.Errorf("timed out while waiting for all peer network info to be returned")
 		}
 		if receivedNetInfoResults >= expectedNetInfoResults {
-			return resolveTendermintPeerMap(result), nil
-		} else {
-			// wait a little before polling  again
-			time.Sleep(1 * time.Second)
+			peerMap, err := resolveTendermintPeerMap(result)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create Tendermint client: %s", err)
+			}
+			return peerMap, nil
 		}
+		// wait a little before polling  again
+		time.Sleep(1 * time.Second)
 	}
 }
 
-func resolveTendermintPeerMap(peers map[string]*tendermintPeerInfo) map[string]*tendermintPeerInfo {
+func resolveTendermintPeerMap(peers map[string]*tendermintPeerInfo) (map[string]*tendermintPeerInfo, error) {
 	result := make(map[string]*tendermintPeerInfo)
 	for addr, peer := range peers {
 		result[addr] = peer
 
 		for _, peerAddr := range peer.PeerAddrs {
 			if _, exists := result[peerAddr]; !exists {
+				client, err := client.NewHTTP(peerAddr, "/websocket")
+				if err != nil {
+					return nil, err
+				}
 				result[peerAddr] = &tendermintPeerInfo{
 					Addr:      peerAddr,
-					Client:    client.NewHTTP(peerAddr, "/websocket"),
+					Client:    client,
 					PeerAddrs: make([]string, 0),
 				}
 			}
 		}
 	}
-	return result
+	return result, nil
 }
 
 func filterTendermintPeerMap(suppliedPeers, newPeers map[string]*tendermintPeerInfo, selectionMethod string, maxCount int) []string {
@@ -234,7 +245,7 @@ func getMinPeerConnectivity(peers map[string]*tendermintPeerInfo) int {
 }
 
 func getPeerAddrs(peers map[string]*tendermintPeerInfo) []string {
-	results := make([]string, 0);
+	results := make([]string, 0)
 	for _, peer := range peers {
 		results = append(results, peer.Addr)
 	}
