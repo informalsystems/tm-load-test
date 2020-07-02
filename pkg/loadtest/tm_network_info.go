@@ -8,6 +8,7 @@ import (
 
 	"github.com/interchainio/tm-load-test/internal/logging"
 	"github.com/tendermint/tendermint/rpc/client"
+	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 )
 
 // tendermintPeerInfo is returned when polling the Tendermint RPC endpoint.
@@ -64,17 +65,24 @@ func waitForTendermintNetworkPeers(
 		}
 
 		peerAddr := fmt.Sprintf("http://%s:26657", peerIP)
+		rpc, err := rpchttp.New(peerAddr, "/websocket")
+		if err != nil {
+			return nil, err
+		}
+
 		suppliedPeers[peerAddr] = &tendermintPeerInfo{
 			Addr:      peerAddr,
-			Client:    client.NewHTTP(peerAddr, "/websocket"),
+			Client:    rpc,
 			PeerAddrs: make([]string, 0),
 		}
 	}
+
 	peers := make(map[string]*tendermintPeerInfo)
 	for a, p := range suppliedPeers {
 		pc := *p
 		peers[a] = &pc
 	}
+
 	for {
 		remainingTimeout := timeout - time.Since(startTime)
 		if remainingTimeout < 0 {
@@ -110,8 +118,8 @@ func waitForTendermintNetworkPeers(
 // peers across the entire network.
 func getTendermintNetworkPeers(
 	peers map[string]*tendermintPeerInfo, // Any existing peers we know about already
-	timeout time.Duration,                // Maximum timeout for the entire operation
-	cancelc chan struct{},                // Allows us to cancel the polling operations
+	timeout time.Duration, // Maximum timeout for the entire operation
+	cancelc chan struct{}, // Allows us to cancel the polling operations
 	logger logging.Logger,
 ) (map[string]*tendermintPeerInfo, error) {
 	startTime := time.Now()
@@ -176,10 +184,14 @@ func resolveTendermintPeerMap(peers map[string]*tendermintPeerInfo) map[string]*
 		result[addr] = peer
 
 		for _, peerAddr := range peer.PeerAddrs {
+			rpc, err := rpchttp.New(peerAddr, "/websocket")
+			if err != nil {
+				return nil
+			}
 			if _, exists := result[peerAddr]; !exists {
 				result[peerAddr] = &tendermintPeerInfo{
 					Addr:      peerAddr,
-					Client:    client.NewHTTP(peerAddr, "/websocket"),
+					Client:    rpc,
 					PeerAddrs: make([]string, 0),
 				}
 			}
@@ -234,7 +246,7 @@ func getMinPeerConnectivity(peers map[string]*tendermintPeerInfo) int {
 }
 
 func getPeerAddrs(peers map[string]*tendermintPeerInfo) []string {
-	results := make([]string, 0);
+	results := make([]string, 0)
 	for _, peer := range peers {
 		results = append(results, peer.Addr)
 	}

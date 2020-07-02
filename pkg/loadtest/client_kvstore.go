@@ -3,7 +3,7 @@ package loadtest
 import (
 	"fmt"
 
-	"github.com/tendermint/tendermint/libs/common"
+	tmrand "github.com/tendermint/tendermint/libs/rand"
 )
 
 // The Tendermint common.RandStr method can effectively generate human-readable
@@ -83,7 +83,7 @@ func (f *KVStoreClientFactory) ValidateConfig(cfg Config) error {
 }
 
 func (f *KVStoreClientFactory) NewClient(cfg Config) (Client, error) {
-	keyPrefix := []byte(common.RandStr(KVStoreClientIDLen))
+	keyPrefix := []byte(tmrand.Str(KVStoreClientIDLen))
 	keySuffixLen, err := requiredKVStoreSuffixLen(cfg.MaxTxsPerEndpoint())
 	if err != nil {
 		return nil, err
@@ -112,7 +112,7 @@ func requiredKVStoreSuffixLen(maxTxCount uint64) (int, error) {
 }
 
 func (c *KVStoreClient) GenerateTx() ([]byte, error) {
-	k := append(c.keyPrefix, []byte(common.RandStr(c.keySuffixLen))...)
-	v := []byte(common.RandStr(c.valueLen))
+	k := append(c.keyPrefix, []byte(tmrand.Str(c.keySuffixLen))...)
+	v := []byte(tmrand.Str(c.valueLen))
 	return append(k, append([]byte("="), v...)...), nil
 }
