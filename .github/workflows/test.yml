@@ -1,0 +1,26 @@
+name: Test Coverage
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v2
+      - run: make build
+
+  test-coverage:
+    runs-on: ubuntu-latest
+    needs: Build
+    steps:
+      - uses: actions/checkout@v2
+      - run: |
+          go test ./... -mod=readonly -timeout 8m -race -coverprofile=coverage.txt -covermode=atomic
+      - uses: codecov/codecov-action@v1.0.7
+        with:
+          file: ./coverage.txt
