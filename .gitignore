@@ -27,3 +27,4 @@ __pycache__
 /*.log
 venv/
 /deployment/hosts
+coverage.txt

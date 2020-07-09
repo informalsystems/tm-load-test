@@ -20,8 +20,7 @@ jobs:
     needs: Build
     steps:
       - uses: actions/checkout@v2
-      - name: test & coverage report creation
-        run: |
+      - run: |
           go test ./... -mod=readonly -timeout 8m -race -coverprofile=coverage.txt -covermode=atomic
       - uses: codecov/codecov-action@v1.0.7
         with:
