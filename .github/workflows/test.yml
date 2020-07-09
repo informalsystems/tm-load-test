@@ -1,0 +1,46 @@
+name: Test Coverage
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - release/**
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v2
+      - uses: technote-space/get-diff-action@v1
+        with:
+          SUFFIX_FILTER: |
+            .go
+            .mod
+            .sum
+          SET_ENV_NAME_INSERTIONS: 1
+          SET_ENV_NAME_LINES: 1
+      - run: make build
+
+  test-coverage:
+    runs-on: ubuntu-latest
+    needs: Build
+    steps:
+      - uses: actions/checkout@v2
+      - uses: technote-space/get-diff-action@v1
+        with:
+          SUFFIX_FILTER: |
+            .go
+            .mod
+            .sum
+          SET_ENV_NAME_INSERTIONS: 1
+          SET_ENV_NAME_LINES: 1
+      - name: test & coverage report creation
+        run: |
+          go test -mod=readonly -timeout 8m -race -coverprofile=coverage.txt -covermode=atomic
+        if: "env.GIT_DIFF != ''"
+      - uses: codecov/codecov-action@v1.0.7
+        with:
+          file: ./coverage.txt
+        if: "env.GIT_DIFF != ''"

@@ -6,34 +6,6 @@ defaults: &defaults
     - image: circleci/golang
 
 jobs:
-  lint:
-    <<: *defaults
-    steps:
-      - checkout
-      - run:
-          name: Lint
-          command: |
-            make lint
-  test:
-    <<: *defaults
-    steps:
-      - checkout
-      - run:
-          name: Test
-          command: |
-            make test
-  build:
-    <<: *defaults
-    steps:
-      - checkout
-      - run:
-          name: Build
-          command: |
-            make build
-      - persist_to_workspace:
-          root: build
-          paths:
-            - "*"
   release:
     <<: *defaults
     steps:
