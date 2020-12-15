@@ -1,0 +1,20 @@
+project_name: tm-load-test
+
+env:
+  # Require use of Go modules.
+  - GO111MODULE=on
+
+checksum:
+  name_template: SHA256SUMS-{{.Version}}.txt
+  algorithm: sha256
+
+release:
+  name_template: "{{.Version}}"
+
+archives:
+  files:
+    - LICENSE
+    - README.md
+    - UPGRADING.md
+    - SECURITY.md
+    - CHANGELOG.md
