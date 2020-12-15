@@ -9,7 +9,7 @@ require (
 	github.com/prometheus/client_golang v1.7.1
 	github.com/satori/go.uuid v1.2.0
 	github.com/sirupsen/logrus v1.6.0
-	github.com/spf13/cobra v1.0.0
+	github.com/spf13/cobra v1.1.1
 	github.com/tendermint/go-amino v0.15.0 // indirect
 	github.com/tendermint/tendermint v0.33.5
 	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
