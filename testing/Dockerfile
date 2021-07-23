@@ -25,7 +25,7 @@ RUN git clone https://github.com/sunnyk56/tm-load-test.git
 WORKDIR $ROOT_DIR/tm-load-test
 RUN make
 
-RUN cp /build/tm-load-test /usr/bin/tm-load-test
+RUN cp /root/tm-load-test/build/tm-load-test /usr/bin/tm-load-test
 
 WORKDIR $ROOT_DIR
 
