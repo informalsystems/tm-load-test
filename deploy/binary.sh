@@ -10,7 +10,7 @@ PATH=$PATH:$GOPATH/bin
 
 echo "----------------cloning_repository-------------------"
 ROOT_DIR=~
-git clone -b load-testing https://github.com/sunnyk56/tm-load-test.git
+git clone https://github.com/informalsystems/tm-load-test.git
 
 echo "----------------------building_binary---------------"
 cd $ROOT_DIR/tm-load-test
