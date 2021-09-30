@@ -1,4 +1,4 @@
-module github.com/interchainio/tm-load-test
+module github.com/informalsystems/tm-load-test
 
 go 1.15
 

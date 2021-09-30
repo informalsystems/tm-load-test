@@ -3,7 +3,7 @@ package loadtest_test
 import (
 	"testing"
 
-	"github.com/interchainio/tm-load-test/pkg/loadtest"
+	"github.com/informalsystems/tm-load-test/pkg/loadtest"
 )
 
 func TestKVStoreClientFactoryConfigValidation(t *testing.T) {
@@ -91,8 +91,8 @@ func BenchmarkKVStoreClient_GenerateTx_100kB(b *testing.B) {
 }
 
 func TestKVStoreClient(t *testing.T) {
-	testCases := []struct{
-		config loadtest.Config
+	testCases := []struct {
+		config      loadtest.Config
 		clientCount int
 	}{
 		{loadtest.Config{Size: 32, Count: 1000}, 5},

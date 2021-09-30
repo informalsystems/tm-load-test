@@ -3,7 +3,7 @@ package loadtest
 import (
 	"time"
 
-	"github.com/interchainio/tm-load-test/internal/logging"
+	"github.com/informalsystems/tm-load-test/internal/logging"
 )
 
 // ExecuteStandalone will run a standalone (non-master/slave) load test.
