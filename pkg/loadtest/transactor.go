@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/interchainio/tm-load-test/internal/logging"
+	"github.com/informalsystems/tm-load-test/internal/logging"
 	rpctypes "github.com/tendermint/tendermint/rpc/jsonrpc/types"
 )
 

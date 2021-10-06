@@ -1,4 +1,4 @@
-[![CircleCI](https://circleci.com/gh/interchainio/tm-load-test/tree/master.svg?style=svg)](https://circleci.com/gh/interchainio/tm-load-test/tree/master)
+[![CircleCI](https://circleci.com/gh/informalsystems/tm-load-test/tree/master.svg?style=svg)](https://circleci.com/gh/informalsystems/tm-load-test/tree/master)
 
 # tm-load-test
 

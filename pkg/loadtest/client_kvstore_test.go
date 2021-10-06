@@ -3,7 +3,7 @@ package loadtest_test
 import (
 	"testing"
 
-	"github.com/interchainio/tm-load-test/pkg/loadtest"
+	"github.com/informalsystems/tm-load-test/pkg/loadtest"
 )
 
 func TestKVStoreClientFactoryConfigValidation(t *testing.T) {
