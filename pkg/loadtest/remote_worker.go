@@ -12,12 +12,12 @@ import (
 )
 
 // remoteWorker encapsulates the logic and transport-layer interaction between
-// the master and a worker, from the master's perspective. It abstracts the
-// low-level transport-layer complexities of interaction into a simple
-// interface.
+// the coordinator and a worker, from the coordinator's perspective. It
+// abstracts the low-level transport-layer complexities of interaction into a
+// simple interface.
 type remoteWorker struct {
-	master *Master       // To be able to interact with the master.
-	sock   *simpleSocket // The simpler interface to our websocket connection.
+	coord *Coordinator  // To be able to interact with the coordinator.
+	sock  *simpleSocket // The simpler interface to our websocket connection.
 
 	// Remote worker state
 	mtx           sync.RWMutex
@@ -48,13 +48,13 @@ type remoteWorkerStateCtrlMsg struct {
 	resp     chan error
 }
 
-func newRemoteWorker(conn *websocket.Conn, master *Master) *remoteWorker {
+func newRemoteWorker(conn *websocket.Conn, coord *Coordinator) *remoteWorker {
 	rs := &remoteWorker{
-		master: master,
+		coord: coord,
 		sock: newSimpleSocket(
 			conn,
-			ssInboundBufSize(master.expectedWorkers()),
-			ssOutboundBufSize(master.expectedWorkers()),
+			ssInboundBufSize(coord.expectedWorkers()),
+			ssOutboundBufSize(coord.expectedWorkers()),
 			ssFlushOnStop(true),
 			ssSendCloseMessage(false),
 			ssParentCtx("remoteWorker"),
@@ -105,7 +105,7 @@ func (rw *remoteWorker) eventLoop() {
 		rw.sock.Stop()
 		close(rw.stopped)
 		rw.logger.Debug("Remote worker event loop shut down")
-		rw.master.UnregisterRemoteWorker(rw.ID(), err)
+		rw.coord.UnregisterRemoteWorker(rw.ID(), err)
 	}()
 
 	// the first thing we need to do is get the worker's ID
@@ -114,7 +114,7 @@ func (rw *remoteWorker) eventLoop() {
 		return
 	}
 
-	// ask the master to register this worker
+	// ask the coordinator to register this worker
 	if err = rw.registerRemoteWorker(); err != nil {
 		_ = rw.sock.WriteWorkerMsg(workerMsg{State: workerRejected, Error: err.Error()})
 		return
@@ -124,7 +124,7 @@ func (rw *remoteWorker) eventLoop() {
 	// metrics.
 	rw.createMetrics()
 
-	// wait until the master indicates that the load test can start, or fail
+	// wait until the coordinator indicates that the load test can start, or fail
 	if err = rw.waitForStart(); err != nil {
 		rw.logger.Error("Failed while waiting for load test to start", "err", err)
 		return
@@ -154,11 +154,11 @@ func (rw *remoteWorker) readID() error {
 }
 
 func (rw *remoteWorker) registerRemoteWorker() error {
-	rw.logger.Debug("Attempting to register with master")
-	if err := rw.master.RegisterRemoteWorker(rw); err != nil {
+	rw.logger.Debug("Attempting to register with coordinator")
+	if err := rw.coord.RegisterRemoteWorker(rw); err != nil {
 		return err
 	}
-	cfg := rw.master.config()
+	cfg := rw.coord.config()
 	// tell the worker it's been accepted and give it its configuration
 	return rw.sock.WriteWorkerMsg(workerMsg{
 		ID:     rw.id,
@@ -206,7 +206,7 @@ func (rw *remoteWorker) receiveTestingUpdates() error {
 				return fmt.Errorf("remote worker failed: %s", msg.Error)
 			}
 			rw.setTxCount(msg.TxCount)
-			rw.master.ReceiveWorkerUpdate(msg)
+			rw.coord.ReceiveWorkerUpdate(msg)
 			if msg.State == workerCompleted {
 				rw.stateMetric.Set(workerStateMetricValues[workerCompleted])
 				return nil

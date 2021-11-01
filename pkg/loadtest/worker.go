@@ -18,8 +18,8 @@ const (
 	workerStartPollTimeout     = 60 * time.Second
 )
 
-// Worker is a WebSockets client that interacts with the Master node to (1) fetch
-// its configuration, (2) execute a load test, and (3) report back to the master
+// Worker is a WebSockets client that interacts with the Coordinator node to (1) fetch
+// its configuration, (2) execute a load test, and (3) report back to the coordinator
 // node regularly on its progress.
 type Worker struct {
 	workerCfg *WorkerConfig
@@ -66,8 +66,8 @@ func (w *Worker) Run() error {
 	cancelTrap := trapInterrupts(func() { w.cancel() }, w.logger)
 	defer close(cancelTrap)
 
-	if err := w.connectToMaster(); err != nil {
-		w.logger.Error("Failed to connect to master", "err", err)
+	if err := w.connectToCoordinator(); err != nil {
+		w.logger.Error("Failed to connect to coordinator", "err", err)
 		return err
 	}
 	defer w.close()
@@ -76,7 +76,7 @@ func (w *Worker) Run() error {
 	go w.sock.Run()
 
 	if err := w.register(); err != nil {
-		w.logger.Error("Failed to register with master", "err", err)
+		w.logger.Error("Failed to register with coordinator", "err", err)
 		return err
 	}
 
@@ -133,16 +133,16 @@ func (w *Worker) removeInterrupt(id string) {
 	w.interruptsMtx.Unlock()
 }
 
-func (w *Worker) connectToMaster() error {
-	timeoutTicker := time.NewTicker(time.Duration(w.workerCfg.MasterConnectTimeout) * time.Second)
+func (w *Worker) connectToCoordinator() error {
+	timeoutTicker := time.NewTicker(time.Duration(w.workerCfg.CoordConnectTimeout) * time.Second)
 	defer timeoutTicker.Stop()
 
-	w.logger.Info("Waiting for successful connection to remote master", "addr", w.workerCfg.MasterAddr)
+	w.logger.Info("Waiting for successful connection to remote coordinator", "addr", w.workerCfg.CoordAddr)
 
 	for {
-		conn, _, err := websocket.DefaultDialer.Dial(w.workerCfg.MasterAddr, nil)
+		conn, _, err := websocket.DefaultDialer.Dial(w.workerCfg.CoordAddr, nil)
 		if err == nil {
-			w.logger.Info("Successfully connected to remote master")
+			w.logger.Info("Successfully connected to remote coordinator")
 			w.sock = newSimpleSocket(
 				conn,
 				ssInboundBufSize(10),
@@ -157,7 +157,7 @@ func (w *Worker) connectToMaster() error {
 		}
 		w.logger.Debug(
 			fmt.Sprintf(
-				"Failed to connect to remote master - retrying in %s",
+				"Failed to connect to remote coordinator - retrying in %s",
 				workerConnectRetryInterval.String(),
 			),
 			"err", err,
@@ -165,36 +165,36 @@ func (w *Worker) connectToMaster() error {
 
 		select {
 		case <-timeoutTicker.C:
-			return fmt.Errorf("failed to reach master within connect time limit")
+			return fmt.Errorf("failed to reach coordinator within connect time limit")
 
 		case <-w.stop:
 			return fmt.Errorf("worker operations cancelled")
 
 		case <-time.After(workerConnectRetryInterval):
-			w.logger.Debug("Retrying to connect to master")
+			w.logger.Debug("Retrying to connect to coordinator")
 		}
 	}
 }
 
 func (w *Worker) register() error {
-	w.logger.Info("Registering with master")
+	w.logger.Info("Registering with coordinator")
 	if err := w.sock.WriteWorkerMsg(workerMsg{ID: w.ID()}); err != nil {
 		return err
 	}
-	// now wait for a response from the master
+	// now wait for a response from the coordinator
 	resp, err := w.sock.ReadWorkerMsg()
 	if err != nil {
 		return err
 	}
 	if resp.State != workerAccepted {
-		return fmt.Errorf("master did not accept worker with state: %s", resp.State)
+		return fmt.Errorf("coordinator did not accept worker with state: %s", resp.State)
 	}
 	if resp.Config == nil {
-		// tell the master there's a problem
-		w.fail("missing configuration from master")
-		return fmt.Errorf("missing configuration from master")
+		// tell the coordinator there's a problem
+		w.fail("missing configuration from coordinator")
+		return fmt.Errorf("missing configuration from coordinator")
 	}
-	// we need to check the master on its configuration
+	// we need to check the coordinator on its configuration
 	if err := resp.Config.Validate(); err != nil {
 		_ = w.sock.WriteWorkerMsg(workerMsg{ID: w.ID(), State: workerFailed, Error: err.Error()})
 		return err
@@ -208,20 +208,20 @@ func (w *Worker) register() error {
 	}
 
 	w.setCfg(*resp.Config)
-	w.logger.Info("Successfully registered with master")
-	w.logger.Debug("Got load testing configuration from master", "cfg", w.Config().ToJSON())
+	w.logger.Info("Successfully registered with coordinator")
+	w.logger.Debug("Got load testing configuration from coordinator", "cfg", w.Config().ToJSON())
 	return nil
 }
 
 func (w *Worker) waitForStart() error {
-	w.logger.Info("Waiting for signal from master to start load test")
+	w.logger.Info("Waiting for signal from coordinator to start load test")
 
 	var msg workerMsg
 	var err error
 
 	for {
-		w.logger.Debug("Polling master for ready message")
-		// try to read a message from the master
+		w.logger.Debug("Polling coordinator for ready message")
+		// try to read a message from the coordinator
 		msg, err = w.sock.ReadWorkerMsg(workerStartPollTimeout)
 		if err == nil {
 			break
@@ -236,10 +236,10 @@ func (w *Worker) waitForStart() error {
 	}
 
 	if msg.State != workerTesting {
-		return fmt.Errorf("unexpected state change from master: %s", msg.State)
+		return fmt.Errorf("unexpected state change from coordinator: %s", msg.State)
 	}
 
-	w.logger.Info("Master initiated load test")
+	w.logger.Info("Coordinator initiated load test")
 	return nil
 }
 
@@ -263,7 +263,7 @@ func (w *Worker) executeLoadTest() error {
 		return err
 	}
 
-	// send the completion notification to the master
+	// send the completion notification to the coordinator
 	if err := w.reportFinalResults(tg.totalTxs(), tg.totalBytes()); err != nil {
 		w.logger.Error("Failed to report final results for load test", "err", err)
 		return err
@@ -274,20 +274,20 @@ func (w *Worker) executeLoadTest() error {
 }
 
 func (w *Worker) reportProgress(tg *TransactorGroup, totalTxs int, totalTxBytes int64) {
-	w.logger.Debug("Reporting progress back to master", "totalTxs", totalTxs)
+	w.logger.Debug("Reporting progress back to coordinator", "totalTxs", totalTxs)
 	if err := w.sock.WriteWorkerMsg(workerMsg{
 		ID:           w.ID(),
 		State:        workerTesting,
 		TxCount:      totalTxs,
 		TotalTxBytes: totalTxBytes,
 	}); err != nil {
-		w.logger.Error("Failed to report progress to master", "err", err)
+		w.logger.Error("Failed to report progress to coordinator", "err", err)
 		tg.Cancel()
 	}
 }
 
 func (w *Worker) reportFinalResults(totalTxs int, totalTxBytes int64) error {
-	w.logger.Debug("Reporting final results back to master", "totalTxs", totalTxs)
+	w.logger.Debug("Reporting final results back to coordinator", "totalTxs", totalTxs)
 	return w.sock.WriteWorkerMsg(workerMsg{
 		ID:           w.ID(),
 		State:        workerCompleted,
@@ -308,7 +308,7 @@ func (w *Worker) cancel() {
 
 func (w *Worker) close() {
 	w.sock.Stop()
-	w.logger.Info("Closed connection to remote master")
+	w.logger.Info("Closed connection to remote coordinator")
 }
 
 func isValidWorkerID(id string) bool {

@@ -66,32 +66,32 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 	rootCmd.PersistentFlags().StringVar(&cfg.StatsOutputFile, "stats-output", "", "Where to store aggregate statistics (in CSV format) for the load test")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Increase output logging verbosity to DEBUG level")
 
-	var masterCfg MasterConfig
-	masterCmd := &cobra.Command{
-		Use:   "master",
+	var coordCfg CoordinatorConfig
+	coordCmd := &cobra.Command{
+		Use:   "coordinator",
 		Short: "Start load test application in MASTER mode",
 		Run: func(cmd *cobra.Command, args []string) {
 			logger.Debug(fmt.Sprintf("Configuration: %s", cfg.ToJSON()))
-			logger.Debug(fmt.Sprintf("Master configuration: %s", masterCfg.ToJSON()))
+			logger.Debug(fmt.Sprintf("Coordinator configuration: %s", coordCfg.ToJSON()))
 			if err := cfg.Validate(); err != nil {
 				logger.Error(err.Error())
 				os.Exit(1)
 			}
-			if err := masterCfg.Validate(); err != nil {
+			if err := coordCfg.Validate(); err != nil {
 				logger.Error(err.Error())
 				os.Exit(1)
 			}
-			master := NewMaster(&cfg, &masterCfg)
-			if err := master.Run(); err != nil {
+			coord := NewCoordinator(&cfg, &coordCfg)
+			if err := coord.Run(); err != nil {
 				os.Exit(1)
 			}
 		},
 	}
-	masterCmd.PersistentFlags().StringVar(&masterCfg.BindAddr, "bind", "localhost:26670", "A host:port combination to which to bind the master on which to listen for worker connections")
-	masterCmd.PersistentFlags().IntVar(&masterCfg.ExpectWorkers, "expect-workers", 2, "The number of workers to expect to connect to the master before starting load testing")
-	masterCmd.PersistentFlags().IntVar(&masterCfg.WorkerConnectTimeout, "connect-timeout", 180, "The maximum number of seconds to wait for all workers to connect")
-	masterCmd.PersistentFlags().IntVar(&masterCfg.ShutdownWait, "shutdown-wait", 0, "The number of seconds to wait after testing completes prior to shutting down the web server")
-	masterCmd.PersistentFlags().IntVar(&masterCfg.LoadTestID, "load-test-id", 0, "The ID of the load test currently underway")
+	coordCmd.PersistentFlags().StringVar(&coordCfg.BindAddr, "bind", "localhost:26670", "A host:port combination to which to bind the coordinator on which to listen for worker connections")
+	coordCmd.PersistentFlags().IntVar(&coordCfg.ExpectWorkers, "expect-workers", 2, "The number of workers to expect to connect to the coordinator before starting load testing")
+	coordCmd.PersistentFlags().IntVar(&coordCfg.WorkerConnectTimeout, "connect-timeout", 180, "The maximum number of seconds to wait for all workers to connect")
+	coordCmd.PersistentFlags().IntVar(&coordCfg.ShutdownWait, "shutdown-wait", 0, "The number of seconds to wait after testing completes prior to shutting down the web server")
+	coordCmd.PersistentFlags().IntVar(&coordCfg.LoadTestID, "load-test-id", 0, "The ID of the load test currently underway")
 
 	var workerCfg WorkerConfig
 	workerCmd := &cobra.Command{
@@ -114,8 +114,8 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 		},
 	}
 	workerCmd.PersistentFlags().StringVar(&workerCfg.ID, "id", "", "An optional unique ID for this worker. Will show up in metrics and logs. If not specified, a UUID will be generated.")
-	workerCmd.PersistentFlags().StringVar(&workerCfg.MasterAddr, "master", "ws://localhost:26670", "The WebSockets URL on which to find the master node")
-	workerCmd.PersistentFlags().IntVar(&workerCfg.MasterConnectTimeout, "connect-timeout", 180, "The maximum number of seconds to keep trying to connect to the master")
+	workerCmd.PersistentFlags().StringVar(&workerCfg.CoordAddr, "coordinator", "ws://localhost:26670", "The WebSockets URL on which to find the coordinator node")
+	workerCmd.PersistentFlags().IntVar(&workerCfg.CoordConnectTimeout, "connect-timeout", 180, "The maximum number of seconds to keep trying to connect to the coordinator")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
@@ -129,7 +129,7 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 		},
 	}
 
-	rootCmd.AddCommand(masterCmd)
+	rootCmd.AddCommand(coordCmd)
 	rootCmd.AddCommand(workerCmd)
 	rootCmd.AddCommand(versionCmd)
 	return rootCmd

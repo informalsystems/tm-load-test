@@ -22,7 +22,7 @@ import (
 
 const totalTxsPerWorker = 50
 
-func TestMasterWorkerHappyPath(t *testing.T) {
+func TestCoordinatorWorkerHappyPath(t *testing.T) {
 	app := kvstore.NewApplication()
 	node := rpctest.StartTendermint(app, rpctest.SuppressStdout, rpctest.RecreateConfig)
 	defer rpctest.StopTendermint(node)
@@ -32,7 +32,7 @@ func TestMasterWorkerHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tempDir, err := ioutil.TempDir("", "tmloadtest-masterworkerhappypath")
+	tempDir, err := ioutil.TempDir("", "tmloadtest-coordinatorworkerhappypath")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,21 +41,21 @@ func TestMasterWorkerHappyPath(t *testing.T) {
 	expectedTotalTxs := totalTxsPerWorker * 2
 	cfg := testConfig(tempDir)
 	expectedTotalBytes := int64(cfg.Size) * int64(expectedTotalTxs)
-	masterCfg := loadtest.MasterConfig{
+	coordCfg := loadtest.CoordinatorConfig{
 		BindAddr:             fmt.Sprintf("localhost:%d", freePort),
 		ExpectWorkers:        2,
 		WorkerConnectTimeout: 10,
 		ShutdownWait:         1,
 	}
-	master := loadtest.NewMaster(&cfg, &masterCfg)
-	masterErr := make(chan error, 1)
+	coord := loadtest.NewCoordinator(&cfg, &coordCfg)
+	coordErr := make(chan error, 1)
 	go func() {
-		masterErr <- master.Run()
+		coordErr <- coord.Run()
 	}()
 
 	workerCfg := loadtest.WorkerConfig{
-		MasterAddr:           fmt.Sprintf("ws://localhost:%d", freePort),
-		MasterConnectTimeout: 10,
+		CoordAddr:           fmt.Sprintf("ws://localhost:%d", freePort),
+		CoordConnectTimeout: 10,
 	}
 	worker1, err := loadtest.NewWorker(&workerCfg)
 	if err != nil {
@@ -82,7 +82,7 @@ func TestMasterWorkerHappyPath(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		select {
-		case err := <-masterErr:
+		case err := <-coordErr:
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -103,7 +103,7 @@ func TestMasterWorkerHappyPath(t *testing.T) {
 			t.Fatal("Timed out waiting for test to complete")
 		}
 
-		// at this point the master should be waiting a little
+		// at this point the coordinator should be waiting a little
 		if worker1Stopped && worker2Stopped && !metricsTested {
 			pstats = getPrometheusStats(t, freePort)
 			metricsTested = true
@@ -308,7 +308,7 @@ type prometheusStats struct {
 }
 
 func getPrometheusStats(t *testing.T, port int) prometheusStats {
-	// grab the prometheus metrics from the master
+	// grab the prometheus metrics from the coordinator
 	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/metrics", port))
 	if err != nil {
 		t.Fatal(err)
@@ -323,7 +323,7 @@ func getPrometheusStats(t *testing.T, port int) prometheusStats {
 	}
 	stats := prometheusStats{}
 	for _, line := range strings.Split(string(body), "\n") {
-		if strings.HasPrefix(line, "tmloadtest_master_total_txs") {
+		if strings.HasPrefix(line, "tmloadtest_coordinator_total_txs") {
 			parts := strings.Split(line, " ")
 			if len(parts) < 2 {
 				t.Fatal("Invalid Prometheus metrics format")
@@ -333,7 +333,7 @@ func getPrometheusStats(t *testing.T, port int) prometheusStats {
 				t.Fatal(err)
 			}
 
-		} else if strings.HasPrefix(line, "tmloadtest_master_total_bytes") {
+		} else if strings.HasPrefix(line, "tmloadtest_coordinator_total_bytes") {
 			parts := strings.Split(line, " ")
 			if len(parts) < 2 {
 				t.Fatal("Invalid Prometheus metrics format")

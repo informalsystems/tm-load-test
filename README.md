@@ -6,8 +6,8 @@ be the successor to [`tm-bench`](https://github.com/tendermint/tendermint/tree/m
 
 Naturally, any  transactions sent to a Tendermint network are specific to the
 ABCI application running on that network. As such, the `tm-load-test` tool comes
-with built-in support for the `kvstore` ABCI application, but you can
-[build your own clients](./pkg/loadtest/README.md) for your own apps.
+with built-in support for the `kvstore` ABCI application, but you can [build
+your own clients](./pkg/loadtest/README.md) for your own apps.
 
 **NB: `tm-load-test` is currently alpha-quality software. Semantic versioning is
 not strictly adhered to prior to a v1.0 release, so breaking API changes can
@@ -28,7 +28,7 @@ make
 ## Usage
 
 `tm-load-test` can be executed in one of two modes: **standalone**, or
-**master/worker**.
+**coordinator/worker**.
 
 ### Standalone Mode
 
@@ -46,23 +46,23 @@ To see a description of what all of the parameters mean, simply run:
 tm-load-test --help
 ```
 
-### Master/Worker Mode
+### Coordinator/Worker Mode
 
-In master/worker mode, which is best used for large-scale, distributed load
+In coordinator/worker mode, which is best used for large-scale, distributed load
 testing, `tm-load-test` allows you to have multiple worker machines connect to a
-single master to obtain their configuration and coordinate their operation.
+single coordinator to obtain their configuration and coordinate their operation.
 
-The master acts as a simple WebSockets host, and the workers are WebSockets
+The coordinator acts as a simple WebSockets host, and the workers are WebSockets
 clients.
 
-On the master machine:
+On the coordinator machine:
 
 ```bash
 # Run tm-load-test with similar parameters to the standalone mode, but now
 # specifying the number of workers to expect (--expect-workers) and the host:port
 # to which to bind (--bind) and listen for incoming worker requests.
 tm-load-test \
-    master \
+    coordinator \
     --expect-workers 2 \
     --bind localhost:26670 \
     -c 1 -T 10 -r 1000 -s 250 \
@@ -73,14 +73,14 @@ tm-load-test \
 On each worker machine:
 
 ```bash
-# Just tell the worker where to find the master - it will figure out the rest.
-tm-load-test worker --master localhost:26680
+# Just tell the worker where to find the coordinator - it will figure out the rest.
+tm-load-test worker --coordinator localhost:26680
 ```
 
 For more help, see the command line parameters' descriptions:
 
 ```bash
-tm-load-test master --help
+tm-load-test coordinator --help
 tm-load-test worker --help
 ```
 
@@ -122,9 +122,9 @@ application, see the [`loadtest` package docs here](./pkg/loadtest/README.md).
 
 ## Monitoring
 
-As of v0.4.1, `tm-load-test` exposes a number of metrics when in master/worker
-mode, but only from the master's web server at the `/metrics` endpoint. So if
-you bind your master node to `localhost:26670`, you should be able to get these
+As of v0.4.1, `tm-load-test` exposes a number of metrics when in coordinator/worker
+mode, but only from the coordinator's web server at the `/metrics` endpoint. So if
+you bind your coordinator node to `localhost:26670`, you should be able to get these
 metrics from:
 
 ```bash
@@ -133,16 +133,16 @@ curl http://localhost:26670/metrics
 
 The following kinds of metrics are made available here:
 
-* Total number of transactions recorded from the master's perspective (across
-  all workers)
+* Total number of transactions recorded from the coordinator's perspective
+  (across all workers)
 * Total number of transactions sent by each worker
-* The status of the master node, which is a gauge that indicates one of the
+* The status of the coordinator node, which is a gauge that indicates one of the
   following codes:
-  * 0 = Master starting
-  * 1 = Master waiting for all peers to connect
-  * 2 = Master waiting for all workers to connect
+  * 0 = Coordinator starting
+  * 1 = Coordinator waiting for all peers to connect
+  * 2 = Coordinator waiting for all workers to connect
   * 3 = Load test underway
-  * 4 = Master and/or one or more worker(s) failed
+  * 4 = Coordinator and/or one or more worker(s) failed
   * 5 = All workers completed load testing successfully
 * The status of each worker node, which is also a gauge that indicates one of
   the following codes:
@@ -155,12 +155,12 @@ The following kinds of metrics are made available here:
 * Standard Prometheus-provided metrics about the garbage collector in
   `tm-load-test`
 * The ID of the load test currently underway (defaults to 0), set by way of the
-  `--load-test-id` flag on the master
+  `--load-test-id` flag on the coordinator
 
 ## Aggregate Statistics
 
-As of `tm-load-test` v0.7.0, one can now write simple aggregate statistics to
-a CSV file once testing completes by specifying the `--stats-output` flag:
+As of `tm-load-test` v0.7.0, one can now write simple aggregate statistics to a
+CSV file once testing completes by specifying the `--stats-output` flag:
 
 ```bash
 # In standalone mode
@@ -169,9 +169,9 @@ tm-load-test -c 1 -T 10 -r 1000 -s 250 \
     --endpoints ws://tm-endpoint1.somewhere.com:26657/websocket,ws://tm-endpoint2.somewhere.com:26657/websocket \
     --stats-output /path/to/save/stats.csv
 
-# From the master in master/worker mode
+# From the coordinator in coordinator/worker mode
 tm-load-test \
-    master \
+    coordinator \
     --expect-workers 2 \
     --bind localhost:26670 \
     -c 1 -T 10 -r 1000 -s 250 \
