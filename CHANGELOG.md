@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.0.0
+* [\#113](https://github.com/informalsystems/tm-load-test/pull/113) - Dropped
+  the master/slave terminology. "Master" nodes have now been renamed to
+  "Coordinator", and "Slave" nodes have been renamed to "Worker".
+
 ## v0.9.0
 * [\#47](https://github.com/informalsystems/tm-load-test/pull/47) - Makes sure
   that the KVStore client's `GenerateTx` method honours the preconfigured
