@@ -9,10 +9,6 @@ ABCI application running on that network. As such, the `tm-load-test` tool comes
 with built-in support for the `kvstore` ABCI application, but you can [build
 your own clients](./pkg/loadtest/README.md) for your own apps.
 
-**NB: `tm-load-test` is currently alpha-quality software. Semantic versioning is
-not strictly adhered to prior to a v1.0 release, so breaking API changes can
-emerge with minor version releases.**
-
 ## Requirements
 
 `tm-load-test` is currently tested using Go v1.17.
