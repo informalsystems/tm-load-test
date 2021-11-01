@@ -204,8 +204,8 @@ func (s *simpleSocket) Read(timeouts ...time.Duration) (int, []byte, error) {
 	}
 }
 
-func (s *simpleSocket) ReadSlaveMsg(timeouts ...time.Duration) (slaveMsg, error) {
-	var msg slaveMsg
+func (s *simpleSocket) ReadWorkerMsg(timeouts ...time.Duration) (workerMsg, error) {
+	var msg workerMsg
 	mt, data, err := s.Read(timeouts...)
 	if err != nil {
 		return msg, err
@@ -238,7 +238,7 @@ func (s *simpleSocket) Write(data []byte, timeouts ...time.Duration) error {
 	}
 }
 
-func (s *simpleSocket) WriteSlaveMsg(msg slaveMsg, timeouts ...time.Duration) error {
+func (s *simpleSocket) WriteWorkerMsg(msg workerMsg, timeouts ...time.Duration) error {
 	data, err := json.Marshal(&msg)
 	if err != nil {
 		return err

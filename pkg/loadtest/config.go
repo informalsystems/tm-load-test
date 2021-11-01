@@ -18,7 +18,7 @@ var validEndpointSelectMethods = map[string]interface{}{
 }
 
 // Config represents the configuration for a single client (i.e. standalone or
-// slave).
+// worker).
 type Config struct {
 	ClientFactory        string   `json:"client_factory"`         // Which client factory should we use for load testing?
 	Connections          int      `json:"connections"`            // The number of WebSockets connections to make to each target endpoint.
@@ -38,20 +38,20 @@ type Config struct {
 	NoTrapInterrupts     bool     `json:"no_trap_interrupts"`     // Should we avoid trapping Ctrl+Break? Only relevant for standalone execution mode.
 }
 
-// MasterConfig is the configuration options specific to a master node.
-type MasterConfig struct {
-	BindAddr            string `json:"bind_addr"`       // The "host:port" to which to bind the master node to listen for incoming slaves.
-	ExpectSlaves        int    `json:"expect_slaves"`   // The number of slaves to expect before starting the load test.
-	SlaveConnectTimeout int    `json:"connect_timeout"` // The number of seconds to wait for all slaves to connect.
-	ShutdownWait        int    `json:"shutdown_wait"`   // The number of seconds to wait at shutdown (while keeping the HTTP server running - primarily to allow Prometheus to keep polling).
-	LoadTestID          int    `json:"load_test_id"`    // An integer greater than 0 that will be exposed via a Prometheus gauge while the load test is underway.
+// CoordinatorConfig is the configuration options specific to a coordinator node.
+type CoordinatorConfig struct {
+	BindAddr             string `json:"bind_addr"`       // The "host:port" to which to bind the coordinator node to listen for incoming workers.
+	ExpectWorkers        int    `json:"expect_workers"`  // The number of workers to expect before starting the load test.
+	WorkerConnectTimeout int    `json:"connect_timeout"` // The number of seconds to wait for all workers to connect.
+	ShutdownWait         int    `json:"shutdown_wait"`   // The number of seconds to wait at shutdown (while keeping the HTTP server running - primarily to allow Prometheus to keep polling).
+	LoadTestID           int    `json:"load_test_id"`    // An integer greater than 0 that will be exposed via a Prometheus gauge while the load test is underway.
 }
 
-// SlaveConfig is the configuration options specific to a slave node.
-type SlaveConfig struct {
-	ID                   string `json:"id"`              // A unique ID for this slave instance. Will show up in the metrics reported by the master for this slave.
-	MasterAddr           string `json:"master_addr"`     // The address at which to find the master node.
-	MasterConnectTimeout int    `json:"connect_timeout"` // The maximum amount of time, in seconds, to allow for the master to become available.
+// WorkerConfig is the configuration options specific to a worker node.
+type WorkerConfig struct {
+	ID                  string `json:"id"`              // A unique ID for this worker instance. Will show up in the metrics reported by the coordinator for this worker.
+	CoordAddr           string `json:"coord_addr"`      // The address at which to find the coordinator node.
+	CoordConnectTimeout int    `json:"connect_timeout"` // The maximum amount of time, in seconds, to allow for the coordinator to become available.
 }
 
 var validBroadcastTxMethods = map[string]interface{}{
@@ -120,7 +120,7 @@ func (c Config) MaxTxsPerEndpoint() uint64 {
 	return uint64(c.Rate) * uint64(c.Time)
 }
 
-func (c MasterConfig) ToJSON() string {
+func (c CoordinatorConfig) ToJSON() string {
 	b, err := json.Marshal(c)
 	if err != nil {
 		return fmt.Sprintf("%v", c)
@@ -128,18 +128,18 @@ func (c MasterConfig) ToJSON() string {
 	return string(b)
 }
 
-func (c MasterConfig) Validate() error {
+func (c CoordinatorConfig) Validate() error {
 	if len(c.BindAddr) == 0 {
-		return fmt.Errorf("master bind address must be specified")
+		return fmt.Errorf("coordinator bind address must be specified")
 	}
-	if c.ExpectSlaves < 1 {
-		return fmt.Errorf("master expect-slaves must be at least 1, but got %d", c.ExpectSlaves)
+	if c.ExpectWorkers < 1 {
+		return fmt.Errorf("coordinator expect-workers must be at least 1, but got %d", c.ExpectWorkers)
 	}
-	if c.SlaveConnectTimeout < 1 {
-		return fmt.Errorf("master connect-timeout must be at least 1 second")
+	if c.WorkerConnectTimeout < 1 {
+		return fmt.Errorf("coordinator connect-timeout must be at least 1 second")
 	}
 	if c.LoadTestID < 0 {
-		return fmt.Errorf("master load-test-id must be 0 or greater")
+		return fmt.Errorf("coordinator load-test-id must be 0 or greater")
 	}
 	return nil
 }
@@ -152,20 +152,20 @@ func (c Config) ToJSON() string {
 	return string(b)
 }
 
-func (c SlaveConfig) Validate() error {
-	if len(c.ID) > 0 && !isValidSlaveID(c.ID) {
-		return fmt.Errorf("Invalid slave ID \"%s\": slave IDs can only be lowercase alphanumeric characters", c.ID)
+func (c WorkerConfig) Validate() error {
+	if len(c.ID) > 0 && !isValidWorkerID(c.ID) {
+		return fmt.Errorf("Invalid worker ID \"%s\": worker IDs can only be lowercase alphanumeric characters", c.ID)
 	}
-	if len(c.MasterAddr) == 0 {
-		return fmt.Errorf("master address must be specified")
+	if len(c.CoordAddr) == 0 {
+		return fmt.Errorf("coordinator address must be specified")
 	}
-	if c.MasterConnectTimeout < 1 {
-		return fmt.Errorf("expected connect-timeout to be >= 1, but was %d", c.MasterConnectTimeout)
+	if c.CoordConnectTimeout < 1 {
+		return fmt.Errorf("expected connect-timeout to be >= 1, but was %d", c.CoordConnectTimeout)
 	}
 	return nil
 }
 
-func (c SlaveConfig) ToJSON() string {
+func (c WorkerConfig) ToJSON() string {
 	b, err := json.Marshal(c)
 	if err != nil {
 		return fmt.Sprintf("%v", c)

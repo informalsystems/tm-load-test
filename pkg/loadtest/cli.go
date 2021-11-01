@@ -59,63 +59,63 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 	rootCmd.PersistentFlags().StringVar(&cfg.BroadcastTxMethod, "broadcast-tx-method", "async", "The broadcast_tx method to use when submitting transactions - can be async, sync or commit")
 	rootCmd.PersistentFlags().StringSliceVar(&cfg.Endpoints, "endpoints", []string{}, "A comma-separated list of URLs indicating Tendermint WebSockets RPC endpoints to which to connect")
 	rootCmd.PersistentFlags().StringVar(&cfg.EndpointSelectMethod, "endpoint-select-method", SelectSuppliedEndpoints, "The method by which to select endpoints")
-	rootCmd.PersistentFlags().IntVar(&cfg.ExpectPeers, "expect-peers", 0, "The minimum number of peers to expect when crawling the P2P network from the specified endpoint(s) prior to waiting for slaves to connect")
+	rootCmd.PersistentFlags().IntVar(&cfg.ExpectPeers, "expect-peers", 0, "The minimum number of peers to expect when crawling the P2P network from the specified endpoint(s) prior to waiting for workers to connect")
 	rootCmd.PersistentFlags().IntVar(&cfg.MaxEndpoints, "max-endpoints", 0, "The maximum number of endpoints to use for testing, where 0 means unlimited")
 	rootCmd.PersistentFlags().IntVar(&cfg.PeerConnectTimeout, "peer-connect-timeout", 600, "The number of seconds to wait for all required peers to connect if expect-peers > 0")
 	rootCmd.PersistentFlags().IntVar(&cfg.MinConnectivity, "min-peer-connectivity", 0, "The minimum number of peers to which each peer must be connected before starting the load test")
 	rootCmd.PersistentFlags().StringVar(&cfg.StatsOutputFile, "stats-output", "", "Where to store aggregate statistics (in CSV format) for the load test")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Increase output logging verbosity to DEBUG level")
 
-	var masterCfg MasterConfig
-	masterCmd := &cobra.Command{
-		Use:   "master",
-		Short: "Start load test application in MASTER mode",
+	var coordCfg CoordinatorConfig
+	coordCmd := &cobra.Command{
+		Use:   "coordinator",
+		Short: "Start load test application in COORDINATOR mode",
 		Run: func(cmd *cobra.Command, args []string) {
 			logger.Debug(fmt.Sprintf("Configuration: %s", cfg.ToJSON()))
-			logger.Debug(fmt.Sprintf("Master configuration: %s", masterCfg.ToJSON()))
+			logger.Debug(fmt.Sprintf("Coordinator configuration: %s", coordCfg.ToJSON()))
 			if err := cfg.Validate(); err != nil {
 				logger.Error(err.Error())
 				os.Exit(1)
 			}
-			if err := masterCfg.Validate(); err != nil {
+			if err := coordCfg.Validate(); err != nil {
 				logger.Error(err.Error())
 				os.Exit(1)
 			}
-			master := NewMaster(&cfg, &masterCfg)
-			if err := master.Run(); err != nil {
+			coord := NewCoordinator(&cfg, &coordCfg)
+			if err := coord.Run(); err != nil {
 				os.Exit(1)
 			}
 		},
 	}
-	masterCmd.PersistentFlags().StringVar(&masterCfg.BindAddr, "bind", "localhost:26670", "A host:port combination to which to bind the master on which to listen for slave connections")
-	masterCmd.PersistentFlags().IntVar(&masterCfg.ExpectSlaves, "expect-slaves", 2, "The number of slaves to expect to connect to the master before starting load testing")
-	masterCmd.PersistentFlags().IntVar(&masterCfg.SlaveConnectTimeout, "connect-timeout", 180, "The maximum number of seconds to wait for all slaves to connect")
-	masterCmd.PersistentFlags().IntVar(&masterCfg.ShutdownWait, "shutdown-wait", 0, "The number of seconds to wait after testing completes prior to shutting down the web server")
-	masterCmd.PersistentFlags().IntVar(&masterCfg.LoadTestID, "load-test-id", 0, "The ID of the load test currently underway")
+	coordCmd.PersistentFlags().StringVar(&coordCfg.BindAddr, "bind", "localhost:26670", "A host:port combination to which to bind the coordinator on which to listen for worker connections")
+	coordCmd.PersistentFlags().IntVar(&coordCfg.ExpectWorkers, "expect-workers", 2, "The number of workers to expect to connect to the coordinator before starting load testing")
+	coordCmd.PersistentFlags().IntVar(&coordCfg.WorkerConnectTimeout, "connect-timeout", 180, "The maximum number of seconds to wait for all workers to connect")
+	coordCmd.PersistentFlags().IntVar(&coordCfg.ShutdownWait, "shutdown-wait", 0, "The number of seconds to wait after testing completes prior to shutting down the web server")
+	coordCmd.PersistentFlags().IntVar(&coordCfg.LoadTestID, "load-test-id", 0, "The ID of the load test currently underway")
 
-	var slaveCfg SlaveConfig
-	slaveCmd := &cobra.Command{
-		Use:   "slave",
-		Short: "Start load test application in SLAVE mode",
+	var workerCfg WorkerConfig
+	workerCmd := &cobra.Command{
+		Use:   "worker",
+		Short: "Start load test application in WORKER mode",
 		Run: func(cmd *cobra.Command, args []string) {
-			logger.Debug(fmt.Sprintf("Slave configuration: %s", slaveCfg.ToJSON()))
-			if err := slaveCfg.Validate(); err != nil {
+			logger.Debug(fmt.Sprintf("Worker configuration: %s", workerCfg.ToJSON()))
+			if err := workerCfg.Validate(); err != nil {
 				logger.Error(err.Error())
 				os.Exit(1)
 			}
-			slave, err := NewSlave(&slaveCfg)
+			worker, err := NewWorker(&workerCfg)
 			if err != nil {
-				logger.Error("Failed to create new slave", "err", err)
+				logger.Error("Failed to create new worker", "err", err)
 				os.Exit(1)
 			}
-			if err := slave.Run(); err != nil {
+			if err := worker.Run(); err != nil {
 				os.Exit(1)
 			}
 		},
 	}
-	slaveCmd.PersistentFlags().StringVar(&slaveCfg.ID, "id", "", "An optional unique ID for this slave. Will show up in metrics and logs. If not specified, a UUID will be generated.")
-	slaveCmd.PersistentFlags().StringVar(&slaveCfg.MasterAddr, "master", "ws://localhost:26670", "The WebSockets URL on which to find the master node")
-	slaveCmd.PersistentFlags().IntVar(&slaveCfg.MasterConnectTimeout, "connect-timeout", 180, "The maximum number of seconds to keep trying to connect to the master")
+	workerCmd.PersistentFlags().StringVar(&workerCfg.ID, "id", "", "An optional unique ID for this worker. Will show up in metrics and logs. If not specified, a UUID will be generated.")
+	workerCmd.PersistentFlags().StringVar(&workerCfg.CoordAddr, "coordinator", "ws://localhost:26670", "The WebSockets URL on which to find the coordinator node")
+	workerCmd.PersistentFlags().IntVar(&workerCfg.CoordConnectTimeout, "connect-timeout", 180, "The maximum number of seconds to keep trying to connect to the coordinator")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
@@ -129,8 +129,8 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 		},
 	}
 
-	rootCmd.AddCommand(masterCmd)
-	rootCmd.AddCommand(slaveCmd)
+	rootCmd.AddCommand(coordCmd)
+	rootCmd.AddCommand(workerCmd)
 	rootCmd.AddCommand(versionCmd)
 	return rootCmd
 }

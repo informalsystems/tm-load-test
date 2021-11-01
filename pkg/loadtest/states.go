@@ -1,13 +1,13 @@
 package loadtest
 
-type slaveState string
+type workerState string
 
-// Remote slave possible states
+// Remote worker possible states
 const (
-	slaveConnected slaveState = "connected"
-	slaveAccepted  slaveState = "accepted"
-	slaveRejected  slaveState = "rejected"
-	slaveTesting   slaveState = "testing"
-	slaveFailed    slaveState = "failed"
-	slaveCompleted slaveState = "completed"
+	workerConnected workerState = "connected"
+	workerAccepted  workerState = "accepted"
+	workerRejected  workerState = "rejected"
+	workerTesting   workerState = "testing"
+	workerFailed    workerState = "failed"
+	workerCompleted workerState = "completed"
 )

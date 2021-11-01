@@ -83,7 +83,7 @@ func main() {
         panic(err)
     }
     // The loadtest.Run method will handle CLI argument parsing, errors, 
-    // configuration, instantiating the load test and/or master/slave 
+    // configuration, instantiating the load test and/or coordinator/worker
     // operations, etc. All it needs is to know which client factory to use for
     // its load testing.
     loadtest.Run(&loadtest.CLIConfig{

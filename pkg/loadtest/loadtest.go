@@ -6,7 +6,7 @@ import (
 	"github.com/informalsystems/tm-load-test/internal/logging"
 )
 
-// ExecuteStandalone will run a standalone (non-master/slave) load test.
+// ExecuteStandalone will run a standalone (non-coordinator/worker) load test.
 func ExecuteStandalone(cfg Config) error {
 	logger := logging.NewLogrusLogger("loadtest")
 
