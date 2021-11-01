@@ -14,7 +14,7 @@ To run the application in a similar fashion to tm-bench (STANDALONE mode):
         --broadcast-tx-method async \
         --endpoints ws://tm-endpoint1.somewhere.com:26657/websocket,ws://tm-endpoint2.somewhere.com:26657/websocket
 
-To run the application in MASTER mode:
+To run the application in COORDINATOR mode:
     tm-load-test \
         coordinator \
         --expect-workers 2 \
@@ -24,17 +24,18 @@ To run the application in MASTER mode:
         --broadcast-tx-method async \
         --endpoints ws://tm-endpoint1.somewhere.com:26657/websocket,ws://tm-endpoint2.somewhere.com:26657/websocket
 
-To run the application in SLAVE mode:
+To run the application in WORKER mode:
     tm-load-test worker --coordinator localhost:26680
 
 NOTES:
-* MASTER mode exposes a "/metrics" endpoint in Prometheus plain text format
+* COORDINATOR mode exposes a "/metrics" endpoint in Prometheus plain text
+* format
   which shows total number of transactions and the status for the coordinator
   and all connected workers.
-* The "--shutdown-wait" flag in MASTER mode is specifically to allow your
+* The "--shutdown-wait" flag in COORDINATOR mode is specifically to allow your
   monitoring system some time to obtain the final Prometheus metrics from the
   metrics endpoint.
-* In SLAVE mode, all load testing-related flags are ignored. The worker always
+* In WORKER mode, all load testing-related flags are ignored. The worker always
   takes instructions from the coordinator node it's connected to.
 `
 

@@ -69,7 +69,7 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 	var coordCfg CoordinatorConfig
 	coordCmd := &cobra.Command{
 		Use:   "coordinator",
-		Short: "Start load test application in MASTER mode",
+		Short: "Start load test application in COORDINATOR mode",
 		Run: func(cmd *cobra.Command, args []string) {
 			logger.Debug(fmt.Sprintf("Configuration: %s", cfg.ToJSON()))
 			logger.Debug(fmt.Sprintf("Coordinator configuration: %s", coordCfg.ToJSON()))
@@ -96,7 +96,7 @@ func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 	var workerCfg WorkerConfig
 	workerCmd := &cobra.Command{
 		Use:   "worker",
-		Short: "Start load test application in SLAVE mode",
+		Short: "Start load test application in WORKER mode",
 		Run: func(cmd *cobra.Command, args []string) {
 			logger.Debug(fmt.Sprintf("Worker configuration: %s", workerCfg.ToJSON()))
 			if err := workerCfg.Validate(); err != nil {
