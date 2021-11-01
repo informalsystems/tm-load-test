@@ -20,9 +20,9 @@ import (
 	rpctest "github.com/tendermint/tendermint/rpc/test"
 )
 
-const totalTxsPerSlave = 50
+const totalTxsPerWorker = 50
 
-func TestMasterSlaveHappyPath(t *testing.T) {
+func TestMasterWorkerHappyPath(t *testing.T) {
 	app := kvstore.NewApplication()
 	node := rpctest.StartTendermint(app, rpctest.SuppressStdout, rpctest.RecreateConfig)
 	defer rpctest.StopTendermint(node)
@@ -32,20 +32,20 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tempDir, err := ioutil.TempDir("", "tmloadtest-masterslavehappypath")
+	tempDir, err := ioutil.TempDir("", "tmloadtest-masterworkerhappypath")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tempDir)
 
-	expectedTotalTxs := totalTxsPerSlave * 2
+	expectedTotalTxs := totalTxsPerWorker * 2
 	cfg := testConfig(tempDir)
 	expectedTotalBytes := int64(cfg.Size) * int64(expectedTotalTxs)
 	masterCfg := loadtest.MasterConfig{
-		BindAddr:            fmt.Sprintf("localhost:%d", freePort),
-		ExpectSlaves:        2,
-		SlaveConnectTimeout: 10,
-		ShutdownWait:        1,
+		BindAddr:             fmt.Sprintf("localhost:%d", freePort),
+		ExpectWorkers:        2,
+		WorkerConnectTimeout: 10,
+		ShutdownWait:         1,
 	}
 	master := loadtest.NewMaster(&cfg, &masterCfg)
 	masterErr := make(chan error, 1)
@@ -53,30 +53,30 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 		masterErr <- master.Run()
 	}()
 
-	slaveCfg := loadtest.SlaveConfig{
+	workerCfg := loadtest.WorkerConfig{
 		MasterAddr:           fmt.Sprintf("ws://localhost:%d", freePort),
 		MasterConnectTimeout: 10,
 	}
-	slave1, err := loadtest.NewSlave(&slaveCfg)
+	worker1, err := loadtest.NewWorker(&workerCfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	slave1Err := make(chan error, 1)
+	worker1Err := make(chan error, 1)
 	go func() {
-		slave1Err <- slave1.Run()
+		worker1Err <- worker1.Run()
 	}()
 
-	slave2, err := loadtest.NewSlave(&slaveCfg)
+	worker2, err := loadtest.NewWorker(&workerCfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	slave2Err := make(chan error, 1)
+	worker2Err := make(chan error, 1)
 	go func() {
-		slave2Err <- slave2.Run()
+		worker2Err <- worker2.Run()
 	}()
 
-	slave1Stopped := false
-	slave2Stopped := false
+	worker1Stopped := false
+	worker2Stopped := false
 	metricsTested := false
 	pstats := prometheusStats{}
 
@@ -87,14 +87,14 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 				t.Fatal(err)
 			}
 
-		case err := <-slave1Err:
-			slave1Stopped = true
+		case err := <-worker1Err:
+			worker1Stopped = true
 			if err != nil {
 				t.Fatal(err)
 			}
 
-		case err := <-slave2Err:
-			slave2Stopped = true
+		case err := <-worker2Err:
+			worker2Stopped = true
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -104,7 +104,7 @@ func TestMasterSlaveHappyPath(t *testing.T) {
 		}
 
 		// at this point the master should be waiting a little
-		if slave1Stopped && slave2Stopped && !metricsTested {
+		if worker1Stopped && worker2Stopped && !metricsTested {
 			pstats = getPrometheusStats(t, freePort)
 			metricsTested = true
 		}
@@ -162,7 +162,7 @@ func TestStandaloneHappyPath(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	expectedTotalTxs := totalTxsPerSlave
+	expectedTotalTxs := totalTxsPerWorker
 	cfg := testConfig(tempDir)
 	expectedTotalBytes := int64(cfg.Size) * int64(expectedTotalTxs)
 	if err := loadtest.ExecuteStandalone(cfg); err != nil {
@@ -215,7 +215,7 @@ func testConfig(tempDir string) loadtest.Config {
 		SendPeriod:           1,
 		Rate:                 100,
 		Size:                 100,
-		Count:                totalTxsPerSlave,
+		Count:                totalTxsPerWorker,
 		BroadcastTxMethod:    "async",
 		Endpoints:            []string{getRPCAddress()},
 		EndpointSelectMethod: loadtest.SelectSuppliedEndpoints,
