@@ -1,5 +1,3 @@
-[![CircleCI](https://circleci.com/gh/informalsystems/tm-load-test/tree/master.svg?style=svg)](https://circleci.com/gh/informalsystems/tm-load-test/tree/master)
-
 # tm-load-test
 
 `tm-load-test` is a distributed load testing tool (and framework) for load
@@ -16,10 +14,7 @@ not strictly adhered to prior to a v1.0 release, so breaking API changes can
 emerge with minor version releases.**
 
 ## Requirements
-In order to build and use the tools, you will need:
-
-* Go 1.13+
-* `make`
+`tm-load-test` is currently tested using Go v1.17.
 
 ## Building
 To build the `tm-load-test` binary in the `build` directory:
