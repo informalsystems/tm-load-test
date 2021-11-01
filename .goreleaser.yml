@@ -4,11 +4,22 @@ env:
   # Require use of Go modules.
   - GO111MODULE=on
 
+builds:
+  - main: ./cmd/tm-load-test/main.go
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+
 checksum:
   name_template: SHA256SUMS-{{.Version}}.txt
   algorithm: sha256
 
 release:
+  header: |
+    See the CHANGELOG for details regarding this release.
   name_template: "{{.Version}}"
 
 archives:
