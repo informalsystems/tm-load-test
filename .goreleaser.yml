@@ -20,7 +20,7 @@ checksum:
 release:
   header: |
     See the CHANGELOG for details regarding this release.
-  name_template: "{{.Version}}"
+  name_template: "v{{.Version}}"
 
 archives:
   - files:
