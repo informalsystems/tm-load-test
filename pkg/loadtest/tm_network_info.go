@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/interchainio/tm-load-test/internal/logging"
+	"github.com/informalsystems/tm-load-test/internal/logging"
 	"github.com/tendermint/tendermint/rpc/client"
 	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 )

@@ -31,7 +31,7 @@ in `./pkg/myabciapp/client.go`
 ```go
 package myabciapp
 
-import "github.com/interchainio/tm-load-test/pkg/loadtest"
+import "github.com/informalsystems/tm-load-test/pkg/loadtest"
 
 // MyABCIAppClientFactory creates instances of MyABCIAppClient
 type MyABCIAppClientFactory struct {}
@@ -74,7 +74,7 @@ Create your own CLI in `./cmd/my-load-tester/main.go`:
 package main
 
 import (
-    "github.com/interchainio/tm-load-test/pkg/loadtest"
+    "github.com/informalsystems/tm-load-test/pkg/loadtest"
     "github.com/you/my-load-tester/pkg/myabciapp"
 )
 

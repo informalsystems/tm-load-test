@@ -10,7 +10,7 @@ build: build-tm-load-test build-tm-outage-sim-server
 
 build-tm-load-test:
 	@go build $(BUILD_FLAGS) \
-		-ldflags "-X github.com/interchainio/tm-load-test/pkg/loadtest.cliVersionCommitID=`git rev-parse --short HEAD`" \
+		-ldflags "-X github.com/informalsystems/tm-load-test/pkg/loadtest.cliVersionCommitID=`git rev-parse --short HEAD`" \
 		-o $(BUILD_DIR)/tm-load-test ./cmd/tm-load-test/main.go
 
 build-tm-outage-sim-server:
