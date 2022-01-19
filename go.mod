@@ -8,8 +8,7 @@ require (
 	github.com/go-kit/kit v0.12.0 // indirect
 	github.com/gorilla/websocket v1.4.2
 	github.com/mimoo/StrobeGo v0.0.0-20210601165009-122bf33a46e0 // indirect
-	github.com/prometheus/client_golang v1.11.0
-	github.com/prometheus/common v0.32.1 // indirect
+	github.com/prometheus/client_golang v1.12.0
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/sasha-s/go-deadlock v0.3.1 // indirect
 	github.com/satori/go.uuid v1.2.0
