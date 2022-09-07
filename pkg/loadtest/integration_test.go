@@ -3,7 +3,7 @@ package loadtest_test
 import (
 	"encoding/csv"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"math"
 	"net"
 	"net/http"
@@ -32,7 +32,7 @@ func TestCoordinatorWorkerHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tempDir, err := ioutil.TempDir("", "tmloadtest-coordinatorworkerhappypath")
+	tempDir, err := os.MkdirTemp("", "tmloadtest-coordinatorworkerhappypath")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestStandaloneHappyPath(t *testing.T) {
 	node := rpctest.StartTendermint(app, rpctest.SuppressStdout, rpctest.RecreateConfig)
 	defer rpctest.StopTendermint(node)
 
-	tempDir, err := ioutil.TempDir("", "tmloadtest-standalonehappypath")
+	tempDir, err := os.MkdirTemp("", "tmloadtest-standalonehappypath")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func getPrometheusStats(t *testing.T, port int) prometheusStats {
 	if resp.StatusCode != 200 {
 		t.Fatalf("Expected status code 200 from Prometheus endpoint, but got %d", resp.StatusCode)
 	}
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal("Failed to read response body from Prometheus endpoint:", err)
 	}
