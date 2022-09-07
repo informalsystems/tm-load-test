@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/url"
 	"sync"
 	"time"
@@ -168,8 +167,6 @@ func (t *Transactor) sendLoop() {
 	t.conn.SetPingHandler(func(message string) error {
 		err := t.conn.WriteControl(websocket.PongMessage, []byte(message), time.Now().Add(connSendTimeout))
 		if err == websocket.ErrCloseSent {
-			return nil
-		} else if e, ok := err.(net.Error); ok && e.Temporary() {
 			return nil
 		}
 		return err
