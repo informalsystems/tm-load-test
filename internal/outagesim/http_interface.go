@@ -2,7 +2,7 @@ package outagesim
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 
@@ -62,7 +62,7 @@ func MakeOutageEndpointHandler(
 			respond(w, http.StatusUnauthorized, fmt.Sprintf("Error: %v", err))
 			return
 		}
-		body, err := ioutil.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			respond(w, http.StatusInternalServerError, "Internal server error while reading request body")
 			return
