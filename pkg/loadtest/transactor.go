@@ -15,7 +15,7 @@ import (
 
 const (
 	connSendTimeout = 10 * time.Second
-	// see https://github.com/tendermint/tendermint/blob/master/rpc/lib/server/handlers.go
+	// see https://github.com/tendermint/tendermint/blob/v0.32.x/rpc/lib/server/handlers.go
 	connPingPeriod = (30 * 9 / 10) * time.Second
 
 	jsonRPCID = rpctypes.JSONRPCStringID("tm-load-test")
