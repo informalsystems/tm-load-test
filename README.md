@@ -2,7 +2,7 @@
 
 `tm-load-test` is a distributed load testing tool (and framework) for load
 testing [Tendermint](https://tendermint.com/) networks and aims to effectively
-be the successor to [`tm-bench`](https://github.com/tendermint/tendermint/tree/master/tools/tm-bench).
+be the successor to [`tm-bench`](https://github.com/tendermint/tendermint/tree/v0.32.x/tools/tm-bench).
 
 Naturally, any  transactions sent to a Tendermint network are specific to the
 ABCI application running on that network. As such, the `tm-load-test` tool comes
