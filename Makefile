@@ -30,11 +30,8 @@ test:
 bench:
 	go test -bench="Benchmark" -run="notests" ./...
 
-$(GOPATH)/bin/golangci-lint:
-	go get -u github.com/golangci/golangci-lint/cmd/golangci-lint
-
-lint: $(GOPATH)/bin/golangci-lint
-	$(GOPATH)/bin/golangci-lint run ./...
+lint:
+	golangci-lint run ./...
 
 clean:
 	rm -rf $(BUILD_DIR)
