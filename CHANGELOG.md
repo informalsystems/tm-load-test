@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.0
+
+This minor release just bumps some dependencies.
+
+* [\#163](https://github.com/informalsystems/tm-load-test/pull/163) - Bump
+  supported version of Tendermint Core to v0.34.24.
+
 ## v1.0.0
 * [\#113](https://github.com/informalsystems/tm-load-test/pull/113) - Dropped
   the master/slave terminology. "Master" nodes have now been renamed to
