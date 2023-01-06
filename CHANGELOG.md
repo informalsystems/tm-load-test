@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.0
+
+* [\#167](https://github.com/informalsystems/tm-load-test/pull/167) -
+  Temporarily replace the Tendermint Core dependency with Informal Systems' fork
+
 ## v1.1.0
 
 This minor release just bumps some dependencies.
