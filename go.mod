@@ -66,3 +66,5 @@ require (
 	google.golang.org/protobuf v1.28.2-0.20220831092852-f930b1dc76e8 // indirect
 	gopkg.in/check.v1 v1.0.0-20200902074654-038fdea0a05b // indirect
 )
+
+replace github.com/tendermint/tendermint => github.com/informalsystems/tendermint v0.34.24
