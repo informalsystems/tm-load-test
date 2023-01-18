@@ -12,7 +12,7 @@ func ExecuteStandalone(cfg Config) error {
 
 	// if we need to wait for the network to stabilize first
 	if cfg.ExpectPeers > 0 {
-		peers, err := waitForTendermintNetworkPeers(
+		peers, err := waitForNetworkPeers(
 			cfg.Endpoints,
 			cfg.EndpointSelectMethod,
 			cfg.ExpectPeers,

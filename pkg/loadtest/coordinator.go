@@ -228,7 +228,7 @@ func (c *Coordinator) waitForWorkers() error {
 // returns a relevant error.
 func (c *Coordinator) waitForPeers() error {
 	c.stateMetric.Set(coordWaitingForPeers)
-	peers, err := waitForTendermintNetworkPeers(
+	peers, err := waitForNetworkPeers(
 		c.cfg.Endpoints,
 		c.cfg.EndpointSelectMethod,
 		c.cfg.ExpectPeers,
