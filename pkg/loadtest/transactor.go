@@ -10,7 +10,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/informalsystems/tm-load-test/internal/logging"
-	rpctypes "github.com/tendermint/tendermint/rpc/jsonrpc/types"
 )
 
 const (
@@ -18,7 +17,7 @@ const (
 	// see https://github.com/tendermint/tendermint/blob/v0.32.x/rpc/lib/server/handlers.go
 	connPingPeriod = (30 * 9 / 10) * time.Second
 
-	jsonRPCID = rpctypes.JSONRPCStringID("tm-load-test")
+	jsonRPCID = -1
 
 	defaultProgressCallbackInterval = 5 * time.Second
 )
@@ -222,7 +221,7 @@ func (t *Transactor) writeTx(tx []byte) error {
 		return err
 	}
 	_ = t.conn.SetWriteDeadline(time.Now().Add(connSendTimeout))
-	return t.conn.WriteJSON(rpctypes.RPCRequest{
+	return t.conn.WriteJSON(RPCRequest{
 		JSONRPC: "2.0",
 		ID:      jsonRPCID,
 		Method:  t.broadcastTxMethod,
