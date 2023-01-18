@@ -2,16 +2,16 @@ package loadtest
 
 import (
 	"fmt"
-
-	tmrand "github.com/tendermint/tendermint/libs/rand"
 )
 
 // The Tendermint common.RandStr method can effectively generate human-readable
 // (alphanumeric) strings from a set of 62 characters. We aim here with the
 // KVStore client to generate unique client IDs as well as totally unique keys
 // for all transactions. Values are not so important.
-const KVStoreClientIDLen int = 5 // Allows for 6,471,002 random client IDs (62C5)
-const kvstoreMinValueLen int = 1 // We at least need 1 character in a key/value pair's value.
+const (
+	KVStoreClientIDLen int = 5 // Allows for 6,471,002 random client IDs (62C5)
+	kvstoreMinValueLen int = 1 // We at least need 1 character in a key/value pair's value.
+)
 
 // This is a map of nCr where n=62 and r varies from 0 through 15. It gives the
 // maximum number of unique transaction IDs that can be accommodated with a
@@ -52,8 +52,10 @@ type KVStoreClient struct {
 	valueLen     int
 }
 
-var _ ClientFactory = (*KVStoreClientFactory)(nil)
-var _ Client = (*KVStoreClient)(nil)
+var (
+	_ ClientFactory = (*KVStoreClientFactory)(nil)
+	_ Client        = (*KVStoreClient)(nil)
+)
 
 func init() {
 	if err := RegisterClientFactory("kvstore", NewKVStoreClientFactory()); err != nil {
@@ -83,7 +85,7 @@ func (f *KVStoreClientFactory) ValidateConfig(cfg Config) error {
 }
 
 func (f *KVStoreClientFactory) NewClient(cfg Config) (Client, error) {
-	keyPrefix := []byte(tmrand.Str(KVStoreClientIDLen))
+	keyPrefix := []byte(randStr(KVStoreClientIDLen))
 	keySuffixLen, err := requiredKVStoreSuffixLen(cfg.MaxTxsPerEndpoint())
 	if err != nil {
 		return nil, err
@@ -112,7 +114,7 @@ func requiredKVStoreSuffixLen(maxTxCount uint64) (int, error) {
 }
 
 func (c *KVStoreClient) GenerateTx() ([]byte, error) {
-	k := append(c.keyPrefix, []byte(tmrand.Str(c.keySuffixLen))...)
-	v := []byte(tmrand.Str(c.valueLen))
+	k := append(c.keyPrefix, []byte(randStr(c.keySuffixLen))...)
+	v := []byte(randStr(c.valueLen))
 	return append(k, append([]byte("="), v...)...), nil
 }
