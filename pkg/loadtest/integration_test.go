@@ -219,7 +219,7 @@ func testConfig(tempDir string) loadtest.Config {
 		NoTrapInterrupts:     true,
 		PeerConnectTimeout:   30,
 		MinConnectivity:      4,
-		ExpectPeers:          1,
+		ExpectPeers:          4,
 	}
 }
 
