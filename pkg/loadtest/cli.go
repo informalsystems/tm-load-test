@@ -12,7 +12,7 @@ import (
 )
 
 // CLIVersion must be manually updated as new versions are released.
-const CLIVersion = "v1.0.0"
+const CLIVersion = "v1.3.0"
 
 // cliVersionCommitID must be set through linker settings. See
 // https://stackoverflow.com/a/11355611/1156132 for details.
@@ -26,9 +26,7 @@ type CLIConfig struct {
 	DefaultClientFactory string
 }
 
-var (
-	flagVerbose bool
-)
+var flagVerbose bool
 
 func buildCLI(cli *CLIConfig, logger logging.Logger) *cobra.Command {
 	cobra.OnInitialize(func() { initLogLevel(logger) })
