@@ -1,3 +1,6 @@
+//go:build integration
+// +build integration
+
 package loadtest_test
 
 import (
@@ -7,25 +10,29 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/informalsystems/tm-load-test/pkg/loadtest"
-	"github.com/tendermint/tendermint/abci/example/kvstore"
-	rpctest "github.com/tendermint/tendermint/rpc/test"
 )
 
-const totalTxsPerWorker = 50
+const (
+	totalTxsPerWorker = 50
+	rpcURL            = "ws://192.167.10.2:26657/websocket"
+)
+
+// Hack to ensure that the integration tests run in series, without interfering
+// with each other.
+var seqMtx sync.Mutex
 
 func TestCoordinatorWorkerHappyPath(t *testing.T) {
-	app := kvstore.NewApplication()
-	node := rpctest.StartTendermint(app, rpctest.SuppressStdout, rpctest.RecreateConfig)
-	defer rpctest.StopTendermint(node)
+	seqMtx.Lock()
+	defer seqMtx.Unlock()
 
 	freePort, err := getFreePort()
 	if err != nil {
@@ -152,9 +159,8 @@ func TestCoordinatorWorkerHappyPath(t *testing.T) {
 }
 
 func TestStandaloneHappyPath(t *testing.T) {
-	app := kvstore.NewApplication()
-	node := rpctest.StartTendermint(app, rpctest.SuppressStdout, rpctest.RecreateConfig)
-	defer rpctest.StopTendermint(node)
+	seqMtx.Lock()
+	defer seqMtx.Unlock()
 
 	tempDir, err := os.MkdirTemp("", "tmloadtest-standalonehappypath")
 	if err != nil {
@@ -199,14 +205,6 @@ func TestStandaloneHappyPath(t *testing.T) {
 	}
 }
 
-func getRPCAddress() string {
-	listenURL, err := url.Parse(rpctest.GetConfig().RPC.ListenAddress)
-	if err != nil {
-		panic(err)
-	}
-	return fmt.Sprintf("ws://localhost:%s/websocket", listenURL.Port())
-}
-
 func testConfig(tempDir string) loadtest.Config {
 	return loadtest.Config{
 		ClientFactory:        "kvstore",
@@ -217,10 +215,13 @@ func testConfig(tempDir string) loadtest.Config {
 		Size:                 100,
 		Count:                totalTxsPerWorker,
 		BroadcastTxMethod:    "async",
-		Endpoints:            []string{getRPCAddress()},
+		Endpoints:            []string{rpcURL},
 		EndpointSelectMethod: loadtest.SelectSuppliedEndpoints,
 		StatsOutputFile:      path.Join(tempDir, "stats.csv"),
 		NoTrapInterrupts:     true,
+		PeerConnectTimeout:   30,
+		MinConnectivity:      4,
+		ExpectPeers:          1,
 	}
 }
 

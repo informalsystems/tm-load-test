@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -40,6 +41,67 @@ func (bz *HexBytes) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// JSONStrInt is an integer whose JSON representation is a string.
+type JSONStrInt int
+
+func (i *JSONStrInt) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	val, err := strconv.Atoi(s)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal int from string: %w", err)
+	}
+	*i = JSONStrInt(val)
+	return nil
+}
+
+// JSONStrUint64 is a uint64 whose JSON representation is a string.
+type JSONStrUint64 uint64
+
+func (i *JSONStrUint64) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	val, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal uint64 from string: %w", err)
+	}
+	*i = JSONStrUint64(val)
+	return nil
+}
+
+// JSONStrInt64 is a int64 whose JSON representation is a string.
+type JSONStrInt64 int64
+
+func (i *JSONStrInt64) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	val, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal int64 from string: %w", err)
+	}
+	*i = JSONStrInt64(val)
+	return nil
+}
+
+// JSONDuration is a time.Duration whose JSON representation is a string
+// containing an integer value.
+type JSONDuration time.Duration
+
+func (i *JSONDuration) UnmarshalJSON(data []byte) error {
+	var ii JSONStrInt64
+	if err := json.Unmarshal(data, &ii); err != nil {
+		return err
+	}
+	*i = JSONDuration(ii)
+	return nil
+}
+
 // RPCRequest corresponds to the JSON-RPC request data format accepted by
 // Tendermint Core v0.34.x.
 type RPCRequest struct {
@@ -65,10 +127,10 @@ type RPCError struct {
 // NetInfo corresponds to the JSON-RPC response format produced by the
 // Tendermint Core v0.34.x net_info RPC API.
 type NetInfo struct {
-	Listening bool     `json:"listening"`
-	Listeners []string `json:"listeners"`
-	NPeers    int      `json:"n_peers"`
-	Peers     []Peer   `json:"peers"`
+	Listening bool       `json:"listening"`
+	Listeners []string   `json:"listeners"`
+	NPeers    JSONStrInt `json:"n_peers"`
+	Peers     []Peer     `json:"peers"`
 }
 
 // Peer represents a network peer.
@@ -97,9 +159,9 @@ type DefaultNodeInfo struct {
 
 // ProtocolVersion contains the protocol versions for the software.
 type ProtocolVersion struct {
-	P2P   uint64 `json:"p2p"`
-	Block uint64 `json:"block"`
-	App   uint64 `json:"app"`
+	P2P   JSONStrUint64 `json:"p2p"`
+	Block JSONStrUint64 `json:"block"`
+	App   JSONStrUint64 `json:"app"`
 }
 
 // DefaultNodeInfoOther is the misc. applcation specific data
@@ -109,7 +171,7 @@ type DefaultNodeInfoOther struct {
 }
 
 type ConnectionStatus struct {
-	Duration    time.Duration
+	Duration    JSONDuration
 	SendMonitor FlowStatus
 	RecvMonitor FlowStatus
 	Channels    []ChannelStatus
@@ -118,27 +180,27 @@ type ConnectionStatus struct {
 // FlowStatus represents the current Monitor status. All transfer rates are in bytes
 // per second rounded to the nearest byte.
 type FlowStatus struct {
-	Start    time.Time     // Transfer start time
-	Bytes    int64         // Total number of bytes transferred
-	Samples  int64         // Total number of samples taken
-	InstRate int64         // Instantaneous transfer rate
-	CurRate  int64         // Current transfer rate (EMA of InstRate)
-	AvgRate  int64         // Average transfer rate (Bytes / Duration)
-	PeakRate int64         // Maximum instantaneous transfer rate
-	BytesRem int64         // Number of bytes remaining in the transfer
-	Duration time.Duration // Time period covered by the statistics
-	Idle     time.Duration // Time since the last transfer of at least 1 byte
-	TimeRem  time.Duration // Estimated time to completion
-	Progress Percent       // Overall transfer progress
-	Active   bool          // Flag indicating an active transfer
+	Start    time.Time    // Transfer start time
+	Bytes    JSONStrInt64 // Total number of bytes transferred
+	Samples  JSONStrInt64 // Total number of samples taken
+	InstRate JSONStrInt64 // Instantaneous transfer rate
+	CurRate  JSONStrInt64 // Current transfer rate (EMA of InstRate)
+	AvgRate  JSONStrInt64 // Average transfer rate (Bytes / Duration)
+	PeakRate JSONStrInt64 // Maximum instantaneous transfer rate
+	BytesRem JSONStrInt64 // Number of bytes remaining in the transfer
+	Duration JSONDuration // Time period covered by the statistics
+	Idle     JSONDuration // Time since the last transfer of at least 1 byte
+	TimeRem  JSONDuration // Estimated time to completion
+	Progress Percent      // Overall transfer progress
+	Active   bool         // Flag indicating an active transfer
 }
 
 type ChannelStatus struct {
 	ID                byte
-	SendQueueCapacity int
-	SendQueueSize     int
-	Priority          int
-	RecentlySent      int64
+	SendQueueCapacity JSONStrInt
+	SendQueueSize     JSONStrInt
+	Priority          JSONStrInt
+	RecentlySent      JSONStrInt64
 }
 
 // Percent represents a percentage in increments of 1/1000th of a percent.
@@ -186,5 +248,5 @@ func (c *httpClient) netInfo() (*NetInfo, error) {
 	if err := json.Unmarshal(res.Result, netInfo); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal net_info inner response for peer %s: %w", c.addr, err)
 	}
-	return nil, nil
+	return netInfo, nil
 }
