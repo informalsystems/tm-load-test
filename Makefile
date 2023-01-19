@@ -1,5 +1,5 @@
 GOPATH ?= $(shell go env GOPATH)
-BUILD_DIR ?= ./build
+BUILD_DIR ?= $(CURDIR)/build
 .DEFAULT_GOAL := build
 BUILD_FLAGS ?= -mod=readonly
 
@@ -30,6 +30,41 @@ build-tm-outage-sim-server-linux:
 test:
 	go test -cover -race ./...
 .PHONY: test
+
+# Builds a Docker image called "tendermint/localnode", which is based on
+# Tendermint Core. Takes the current system user and group ID as the user/group
+# IDs for the tmuser user within the container so as to eliminate permissions
+# issues when generating testnet files in the localnet target.
+localnode:
+	@docker build -f ./test/localnode/Dockerfile \
+		--build-arg UID=$(shell id -u) \
+		--build-arg GID=$(shell id -g) \
+		-t tendermint/localnode:latest \
+		./test/localnode/
+.PHONY: localnode
+
+localnet: localnode
+	@if ! [ -f build/node0/config/genesis.json ]; then \
+		mkdir -p build && \
+		docker run \
+			--rm \
+			-v $(BUILD_DIR):/tendermint:Z \
+			tendermint/localnode \
+			testnet --config /etc/tendermint/config-template.toml --o . --starting-ip-address 192.168.10.2; \
+	fi
+.PHONY: localnet
+
+localnet-start: localnet
+	@docker-compose -f ./test/docker-compose.yml up -d
+.PHONY: localnet-start
+
+localnet-stop:
+	@docker-compose -f ./test/docker-compose.yml down
+.PHONY: localnet-stop
+
+integration-test:
+	@./test/integration-test.sh
+.PHONY: integration-test
 
 bench:
 	go test -bench="Benchmark" -run="notests" ./...

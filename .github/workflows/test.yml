@@ -13,9 +13,7 @@ jobs:
       - uses: actions/setup-go@v3
         with:
           go-version: "1.18"
-      - run: make build
-      - run: |
-          go test ./... -mod=readonly -timeout 8m -race -coverprofile=coverage.txt -covermode=atomic
+      - run: make integration-test
       - uses: codecov/codecov-action@v3.1.1
         with:
           file: ./coverage.txt

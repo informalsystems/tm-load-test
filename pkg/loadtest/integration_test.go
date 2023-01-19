@@ -1,3 +1,6 @@
+//go:build integration
+// +build integration
+
 package loadtest_test
 
 import (
@@ -7,7 +10,6 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -16,17 +18,22 @@ import (
 	"time"
 
 	"github.com/informalsystems/tm-load-test/pkg/loadtest"
-	"github.com/tendermint/tendermint/abci/example/kvstore"
-	rpctest "github.com/tendermint/tendermint/rpc/test"
 )
 
-const totalTxsPerWorker = 50
+const (
+	totalTxsPerWorker = 50
+	rpcURL            = "ws://192.168.10.2:26657/websocket"
+)
 
-func TestCoordinatorWorkerHappyPath(t *testing.T) {
-	app := kvstore.NewApplication()
-	node := rpctest.StartTendermint(app, rpctest.SuppressStdout, rpctest.RecreateConfig)
-	defer rpctest.StopTendermint(node)
+func TestIntegration(t *testing.T) {
+	testStandaloneHappyPath(t)
+	t.Log("Waiting for network to settle after previous test's tx submissions")
+	time.Sleep(5 * time.Second)
+	testCoordinatorWorkerHappyPath(t)
+}
 
+func testCoordinatorWorkerHappyPath(t *testing.T) {
+	t.Log("Running coordinator/worker mode happy path integration test")
 	freePort, err := getFreePort()
 	if err != nil {
 		t.Fatal(err)
@@ -151,11 +158,8 @@ func TestCoordinatorWorkerHappyPath(t *testing.T) {
 	}
 }
 
-func TestStandaloneHappyPath(t *testing.T) {
-	app := kvstore.NewApplication()
-	node := rpctest.StartTendermint(app, rpctest.SuppressStdout, rpctest.RecreateConfig)
-	defer rpctest.StopTendermint(node)
-
+func testStandaloneHappyPath(t *testing.T) {
+	t.Log("Running standalone happy path integration test")
 	tempDir, err := os.MkdirTemp("", "tmloadtest-standalonehappypath")
 	if err != nil {
 		t.Fatal(err)
@@ -199,14 +203,6 @@ func TestStandaloneHappyPath(t *testing.T) {
 	}
 }
 
-func getRPCAddress() string {
-	listenURL, err := url.Parse(rpctest.GetConfig().RPC.ListenAddress)
-	if err != nil {
-		panic(err)
-	}
-	return fmt.Sprintf("ws://localhost:%s/websocket", listenURL.Port())
-}
-
 func testConfig(tempDir string) loadtest.Config {
 	return loadtest.Config{
 		ClientFactory:        "kvstore",
@@ -217,10 +213,13 @@ func testConfig(tempDir string) loadtest.Config {
 		Size:                 100,
 		Count:                totalTxsPerWorker,
 		BroadcastTxMethod:    "async",
-		Endpoints:            []string{getRPCAddress()},
+		Endpoints:            []string{rpcURL},
 		EndpointSelectMethod: loadtest.SelectSuppliedEndpoints,
 		StatsOutputFile:      path.Join(tempDir, "stats.csv"),
 		NoTrapInterrupts:     true,
+		PeerConnectTimeout:   30,
+		MinConnectivity:      4,
+		ExpectPeers:          1,
 	}
 }
 
