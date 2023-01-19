@@ -14,7 +14,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -26,14 +25,15 @@ const (
 	rpcURL            = "ws://192.168.10.2:26657/websocket"
 )
 
-// Hack to ensure that the integration tests run in series, without interfering
-// with each other.
-var seqMtx sync.Mutex
+func TestIntegration(t *testing.T) {
+	testStandaloneHappyPath(t)
+	t.Log("Waiting for network to settle after previous test's tx submissions")
+	time.Sleep(5 * time.Second)
+	testCoordinatorWorkerHappyPath(t)
+}
 
-func TestCoordinatorWorkerHappyPath(t *testing.T) {
-	seqMtx.Lock()
-	defer seqMtx.Unlock()
-
+func testCoordinatorWorkerHappyPath(t *testing.T) {
+	t.Log("Running coordinator/worker mode happy path integration test")
 	freePort, err := getFreePort()
 	if err != nil {
 		t.Fatal(err)
@@ -158,10 +158,8 @@ func TestCoordinatorWorkerHappyPath(t *testing.T) {
 	}
 }
 
-func TestStandaloneHappyPath(t *testing.T) {
-	seqMtx.Lock()
-	defer seqMtx.Unlock()
-
+func testStandaloneHappyPath(t *testing.T) {
+	t.Log("Running standalone happy path integration test")
 	tempDir, err := os.MkdirTemp("", "tmloadtest-standalonehappypath")
 	if err != nil {
 		t.Fatal(err)
