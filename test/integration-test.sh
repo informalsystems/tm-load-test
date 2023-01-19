@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+#
+# This script is intended to be executed from the root of the tm-load-test
+# repository.
 
 make localnet-stop || exit 1
 rm -rf build
