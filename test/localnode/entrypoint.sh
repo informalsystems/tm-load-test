@@ -27,8 +27,6 @@ id
 ##
 export TMHOME="/tendermint/node${ID}"
 
-stat ${TMHOME}
-
 if [ -d "`dirname ${TMHOME}/${LOG}`" ]; then
   "$BINARY" "$@" | tee "${TMHOME}/${LOG}"
 else
