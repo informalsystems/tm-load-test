@@ -16,7 +16,7 @@ services:
       - ../build:/tendermint:Z
     networks:
       localnet:
-        ipv4_address: 192.167.10.2
+        ipv4_address: 192.168.10.2
 
   node1:
     container_name: node1
@@ -30,7 +30,7 @@ services:
       - ../build:/tendermint:Z
     networks:
       localnet:
-        ipv4_address: 192.167.10.3
+        ipv4_address: 192.168.10.3
 
   node2:
     container_name: node2
@@ -44,7 +44,7 @@ services:
       - ../build:/tendermint:Z
     networks:
       localnet:
-        ipv4_address: 192.167.10.4
+        ipv4_address: 192.168.10.4
 
   node3:
     container_name: node3
@@ -58,7 +58,7 @@ services:
       - ../build:/tendermint:Z
     networks:
       localnet:
-        ipv4_address: 192.167.10.5
+        ipv4_address: 192.168.10.5
 
 networks:
   localnet:
@@ -66,4 +66,4 @@ networks:
     ipam:
       driver: default
       config:
-        - subnet: 192.167.10.0/16
+        - subnet: 192.168.10.0/16

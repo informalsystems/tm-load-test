@@ -50,7 +50,7 @@ localnet: localnode
 			--rm \
 			-v $(BUILD_DIR):/tendermint:Z \
 			tendermint/localnode \
-			testnet --config /etc/tendermint/config-template.toml --o . --starting-ip-address 192.167.10.2; \
+			testnet --config /etc/tendermint/config-template.toml --o . --starting-ip-address 192.168.10.2; \
 	fi
 .PHONY: localnet
 

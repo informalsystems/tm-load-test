@@ -23,7 +23,7 @@ import (
 
 const (
 	totalTxsPerWorker = 50
-	rpcURL            = "ws://192.167.10.2:26657/websocket"
+	rpcURL            = "ws://192.168.10.2:26657/websocket"
 )
 
 // Hack to ensure that the integration tests run in series, without interfering
