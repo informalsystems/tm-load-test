@@ -62,7 +62,7 @@ localnet-stop:
 	@docker-compose -f ./test/docker-compose.yml down
 .PHONY: localnet-stop
 
-integration-test: lint
+integration-test:
 	@./test/integration-test.sh
 .PHONY: integration-test
 
