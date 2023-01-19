@@ -186,10 +186,29 @@ avg_tx_rate,899.818398,transactions per second
 ```
 
 ## Development
+
 To run the linter and the tests:
 
 ```bash
 make lint
 make test
 ```
+
+### Integration Testing
+
+Integration testing requires Docker to be installed locally.
+
+```bash
+make integration-test
+```
+
+This integration test:
+
+1. Sets up a 4-validator, fully connected Tendermint Core-based network on a
+   192.168.0.0/16 subnet (the same kind of testnet as the Tendermint Core
+   localnet).
+2. Executes integration tests against the network in series (it's important that
+   integration tests be executed in series so as to not overlap with one
+   another).
+3. Tears down the 4-validator network, reporting code coverage.
 
