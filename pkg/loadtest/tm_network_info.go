@@ -95,7 +95,7 @@ func waitForNetworkPeers(
 		if peerCount >= minDiscoveredPeers && peerConnectivity >= minPeerConnectivity {
 			logger.Info("All required peers connected", "count", peerCount, "minConnectivity", minPeerConnectivity)
 			// we're done here
-			return filterPeerMap(suppliedPeers, peers, selectionMethod, maxReturnedPeers), nil
+			return filterPeerMap(suppliedPeers, peers, selectionMethod, maxReturnedPeers, logger)
 		} else {
 			logger.Debug(
 				"Peers discovered so far",
@@ -191,12 +191,19 @@ func resolvePeerMap(peers map[string]*peerInfo) map[string]*peerInfo {
 	return result
 }
 
-func filterPeerMap(suppliedPeers, newPeers map[string]*peerInfo, selectionMethod string, maxCount int) []string {
+func filterPeerMap(suppliedPeers, newPeers map[string]*peerInfo, selectionMethod string, maxCount int, logger logging.Logger) ([]string, error) {
+	logger.Debug(
+		"Filtering peer map",
+		"suppliedPeers", suppliedPeers,
+		"newPeers", newPeers,
+		"selectionMethod", selectionMethod,
+		"maxCount", maxCount,
+	)
 	result := make([]string, 0)
 	for peerAddr := range newPeers {
 		u, err := url.Parse(peerAddr)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		addr := fmt.Sprintf("ws://%s:26657/websocket", u.Hostname())
 		switch selectionMethod {
@@ -214,11 +221,11 @@ func filterPeerMap(suppliedPeers, newPeers map[string]*peerInfo, selectionMethod
 			// otherwise, always add it
 			result = append(result, addr)
 		}
-		if len(result) >= maxCount {
+		if maxCount > 0 && len(result) >= maxCount {
 			break
 		}
 	}
-	return result
+	return result, nil
 }
 
 func getMinPeerConnectivity(peers map[string]*peerInfo) int {

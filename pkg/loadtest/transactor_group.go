@@ -3,6 +3,8 @@ package loadtest
 import (
 	"sync"
 	"time"
+
+	"github.com/informalsystems/tm-load-test/internal/logging"
 )
 
 // TransactorGroup allows us to encapsulate the management of a group of
@@ -21,6 +23,8 @@ type TransactorGroup struct {
 
 	stopProgressReporter    chan struct{} // Close this to stop the progress reporter.
 	progressReporterStopped chan struct{} // Closed when the progress reporter goroutine has completely stopped.
+
+	logger logging.Logger
 }
 
 func NewTransactorGroup() *TransactorGroup {
@@ -31,7 +35,12 @@ func NewTransactorGroup() *TransactorGroup {
 		progressCallbackInterval: defaultProgressCallbackInterval,
 		stopProgressReporter:     make(chan struct{}, 1),
 		progressReporterStopped:  make(chan struct{}, 1),
+		logger:                   logging.NewNoopLogger(),
 	}
+}
+
+func (g *TransactorGroup) SetLogger(logger logging.Logger) {
+	g.logger = logger
 }
 
 // Add will instantiate a new Transactor with the given parameters. If
@@ -46,6 +55,7 @@ func (g *TransactorGroup) Add(remoteAddr string, config *Config) error {
 	id := len(g.transactors)
 	t.SetProgressCallback(id, g.getProgressCallbackInterval()/2, g.trackTransactorProgress)
 	g.transactors = append(g.transactors, t)
+	g.logger.Debug("Added transactor", "remoteAddr", remoteAddr)
 	return nil
 }
 

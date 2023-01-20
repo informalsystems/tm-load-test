@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.3.0
+
+*Jan 19th, 2023*
+
+* [\#168](https://github.com/informalsystems/tm-load-test/pull/168) - Remove
+  dependency on Tendermint Core, following
+  [tendermint/tendermint\#9972](https://github.com/tendermint/tendermint/issues/9972).
+  Also improves integration tests.
+
 ## v1.2.0
 
 * [\#167](https://github.com/informalsystems/tm-load-test/pull/167) -
