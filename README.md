@@ -11,7 +11,7 @@ your own clients](./pkg/loadtest/README.md) for your own apps.
 
 ## Requirements
 
-`tm-load-test` is currently tested using Go v1.19.
+`tm-load-test` is currently tested using Go v1.20.
 
 ## Building
 
