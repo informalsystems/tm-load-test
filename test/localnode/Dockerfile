@@ -1,4 +1,4 @@
-FROM tendermint/tendermint:v0.34.24
+FROM cometbft/cometbft
 LABEL maintainer="hello@informal.systems"
 
 ARG UID
@@ -16,8 +16,8 @@ RUN usermod -u ${UID} -g ${GID} tmuser
 
 USER tmuser
 
-VOLUME /tendermint
-WORKDIR /tendermint
+VOLUME /cometbft
+WORKDIR /cometbft
 
 EXPOSE 26656 26657
 ENTRYPOINT ["/usr/bin/entrypoint.sh"]
@@ -25,4 +25,4 @@ CMD ["node", "--proxy_app", "kvstore"]
 STOPSIGNAL SIGTERM
 
 COPY entrypoint.sh /usr/bin/entrypoint.sh
-COPY config-template.toml /etc/tendermint/config-template.toml
+COPY config-template.toml /etc/cometbft/config-template.toml

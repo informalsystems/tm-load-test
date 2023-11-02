@@ -3,7 +3,7 @@
 ##
 ## Input parameters
 ##
-BINARY=${BINARY:-/usr/bin/tendermint}
+BINARY=${BINARY:-/usr/bin/cometbft}
 ID=${ID:-0}
 LOG=${LOG:-tendermint.log}
 
@@ -33,6 +33,6 @@ else
   "$BINARY" "$@"
 fi
 
-find /tendermint -type d -exec chmod ug=rwx,o=rx {} \;
-find /tendermint -type f -exec chmod ug=rw,o=r {} \;
+find /cometbft -type d -exec chmod ug=rwx,o=rx {} \;
+find /cometbft -type f -exec chmod ug=rw,o=r {} \;
 
