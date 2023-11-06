@@ -1,7 +1,7 @@
 # NB: This compose file is intended to be executed via the Makefile in the root
 # of this repository. See the relative paths to the "build" directory in the
 # volume definitions below.
-version: '3'
+version: "3"
 
 services:
   node0:
@@ -13,7 +13,7 @@ services:
       - ID=0
       - LOG=${LOG:-cometbft.log}
     volumes:
-      - ../build:/cometbft:Z
+      - ../build/node0:/cometbft:Z
     networks:
       localnet:
         ipv4_address: 192.168.10.2
@@ -27,7 +27,7 @@ services:
       - ID=1
       - LOG=${LOG:-cometbft.log}
     volumes:
-      - ../build:/cometbft:Z
+      - ../build/node1:/cometbft:Z
     networks:
       localnet:
         ipv4_address: 192.168.10.3
@@ -41,7 +41,7 @@ services:
     ports:
       - "26661-26662:26656-26657"
     volumes:
-      - ../build:/cometbft:Z
+      - ../build/node2:/cometbft:Z
     networks:
       localnet:
         ipv4_address: 192.168.10.4
@@ -55,7 +55,7 @@ services:
     ports:
       - "26663-26664:26656-26657"
     volumes:
-      - ../build:/cometbft:Z
+      - ../build/node3:/cometbft:Z
     networks:
       localnet:
         ipv4_address: 192.168.10.5
@@ -66,4 +66,4 @@ networks:
     ipam:
       driver: default
       config:
-        - subnet: 192.168.10.0/16
+        - subnet: 192.168.10.0/24

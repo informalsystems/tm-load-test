@@ -25,7 +25,7 @@ id
 ##
 ## Run binary with all parameters
 ##
-export TMHOME="/tendermint/node${ID}"
+export TMHOME="/cometbft/node${ID}"
 
 if [ -d "`dirname ${TMHOME}/${LOG}`" ]; then
   "$BINARY" "$@" | tee "${TMHOME}/${LOG}"

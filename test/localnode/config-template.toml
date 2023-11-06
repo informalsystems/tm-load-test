@@ -1,2 +1,8 @@
 [rpc]
 laddr = "tcp://0.0.0.0:26657"
+
+[grpc]
+# Enable defines if the gRPC server should be enabled.
+enable = true
+# Address defines the gRPC server address to bind to.
+address = "localhost:9090"
