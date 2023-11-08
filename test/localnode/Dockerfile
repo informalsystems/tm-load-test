@@ -10,6 +10,8 @@ RUN apk update && \
     apk upgrade && \
     apk --no-cache add curl jq file shadow
 
+RUN groupadd -g ${GID} tmgroup || true
+
 # Set the tmuser's UID and GID to the preconfigured values to match the host's
 # UID/GID combo. Otherwise permissions become difficult to manage.
 RUN usermod -u ${UID} -g ${GID} tmuser
