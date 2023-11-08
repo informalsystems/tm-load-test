@@ -1,4 +1,4 @@
-FROM tendermint/tendermint:v0.34.24
+FROM cometbft/cometbft:v0.38.0
 LABEL maintainer="hello@informal.systems"
 
 ARG UID
