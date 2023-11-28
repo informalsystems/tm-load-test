@@ -1,4 +1,4 @@
-FROM cometbft/cometbft:v0.38.0
+FROM cometbft/cometbft:v0.38.2
 LABEL maintainer="hello@informal.systems"
 
 ARG UID
