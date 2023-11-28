@@ -31,7 +31,7 @@ test:
 	go test -cover -race ./...
 .PHONY: test
 
-# Builds a Docker image called "tendermint/localnode", which is based on
+# Builds a Docker image called "cometbft/localnode", which is based on
 # Tendermint Core. Takes the current system user and group ID as the user/group
 # IDs for the tmuser user within the container so as to eliminate permissions
 # issues when generating testnet files in the localnet target.
@@ -39,7 +39,7 @@ localnode:
 	@docker build -f ./test/localnode/Dockerfile \
 		--build-arg UID=$(shell id -u) \
 		--build-arg GID=$(shell id -g) \
-		-t tendermint/localnode:latest \
+		-t cometbft/localnode:latest \
 		./test/localnode/
 .PHONY: localnode
 
@@ -48,9 +48,9 @@ localnet: localnode
 		mkdir -p build && \
 		docker run \
 			--rm \
-			-v $(BUILD_DIR):/tendermint:Z \
-			tendermint/localnode \
-			testnet --config /etc/tendermint/config-template.toml --o . --starting-ip-address 192.168.10.2; \
+			-v $(BUILD_DIR):/cometbft:Z \
+			cometbft/localnode \
+			testnet --config /etc/cometbft/config-template.toml --o . --starting-ip-address 192.168.10.2; \
 	fi
 .PHONY: localnet
 

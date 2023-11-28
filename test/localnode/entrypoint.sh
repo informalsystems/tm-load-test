@@ -3,15 +3,15 @@
 ##
 ## Input parameters
 ##
-BINARY=${BINARY:-/usr/bin/tendermint}
+BINARY=${BINARY:-/usr/bin/cometbft}
 ID=${ID:-0}
-LOG=${LOG:-tendermint.log}
+LOG=${LOG:-cometbft.log}
 
 ##
 ## Assert linux binary
 ##
 if ! [ -f "${BINARY}" ]; then
-	echo "The binary $(basename "${BINARY}") cannot be found. Please add the binary to the shared folder. Please use the BINARY environment variable if the name of the binary is not 'tendermint' E.g.: -e BINARY=tendermint_my_test_version"
+	echo "The binary $(basename "${BINARY}") cannot be found. Please add the binary to the shared folder. Please use the BINARY environment variable if the name of the binary is not 'cometbft' E.g.: -e BINARY=cometbft_my_test_version"
 	exit 1
 fi
 BINARY_CHECK="$(file "$BINARY" | grep 'ELF 64-bit LSB executable, x86-64')"
@@ -25,14 +25,14 @@ id
 ##
 ## Run binary with all parameters
 ##
-export TMHOME="/tendermint/node${ID}"
+export CMTHOME="/cometbft/node${ID}"
 
-if [ -d "`dirname ${TMHOME}/${LOG}`" ]; then
-  "$BINARY" "$@" | tee "${TMHOME}/${LOG}"
+if [ -d "`dirname ${CMTHOME}/${LOG}`" ]; then
+  "$BINARY" "$@" | tee "${CMTHOME}/${LOG}"
 else
   "$BINARY" "$@"
 fi
 
-find /tendermint -type d -exec chmod ug=rwx,o=rx {} \;
-find /tendermint -type f -exec chmod ug=rw,o=r {} \;
+find /cometbft -type d -exec chmod ug=rwx,o=rx {} \;
+find /cometbft -type f -exec chmod ug=rw,o=r {} \;
 
