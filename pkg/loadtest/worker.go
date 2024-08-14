@@ -7,9 +7,9 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/informalsystems/tm-load-test/internal/logging"
-	uuid "github.com/satori/go.uuid"
 )
 
 const (
@@ -321,5 +321,5 @@ func isValidWorkerID(id string) bool {
 }
 
 func makeWorkerID() string {
-	return strings.ReplaceAll(uuid.NewV4().String(), "-", "")
+	return strings.ReplaceAll(uuid.New().String(), "-", "")
 }
