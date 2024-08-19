@@ -1,7 +1,6 @@
 # NB: This compose file is intended to be executed via the Makefile in the root
 # of this repository. See the relative paths to the "build" directory in the
 # volume definitions below.
-version: '3'
 
 services:
   node0:
