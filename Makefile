@@ -55,11 +55,11 @@ localnet: localnode
 .PHONY: localnet
 
 localnet-start: localnet
-	@docker-compose -f ./test/docker-compose.yml up -d
+	@docker compose -f ./test/docker-compose.yml up -d
 .PHONY: localnet-start
 
 localnet-stop:
-	@docker-compose -f ./test/docker-compose.yml down
+	@docker compose -f ./test/docker-compose.yml down
 .PHONY: localnet-stop
 
 integration-test:
