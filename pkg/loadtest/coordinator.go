@@ -2,6 +2,7 @@ package loadtest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -294,7 +295,7 @@ func (c *Coordinator) receiveTestingUpdates() error {
 				}
 
 			case workerFailed:
-				return fmt.Errorf(msg.Error)
+				return errors.New(msg.Error)
 
 			default:
 				return fmt.Errorf("unexpected state from remote worker: %s", msg.State)
