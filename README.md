@@ -1,5 +1,7 @@
 # tm-load-test
 
+**The project has been moved to [cometbft/cometbft-load-test](https://github.com/cometbft/cometbft-load-test/).**
+
 `tm-load-test` is a distributed load testing tool (and framework) for load
 testing [Tendermint](https://tendermint.com/) networks and aims to effectively
 be the successor to [`tm-bench`](https://github.com/tendermint/tendermint/tree/v0.32.x/tools/tm-bench).
