@@ -11,7 +11,7 @@ your own clients](./pkg/loadtest/README.md) for your own apps.
 
 ## Requirements
 
-`tm-load-test` is currently tested using Go v1.20.
+`tm-load-test` is currently tested using Go v1.23.
 
 ## Building
 
@@ -211,4 +211,3 @@ This integration test:
    integration tests be executed in series so as to not overlap with one
    another).
 3. Tears down the 4-validator network, reporting code coverage.
-
